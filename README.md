@@ -17,6 +17,7 @@
 | [mcpp](mcpp/README.md) | 用 [mcpp](https://github.com/mcpp-community/mcpp) 构建 C++23 模块项目, 给 mcpp-index 打包 |
 | [xlings](xlings/README.md) | 用 [xlings](https://github.com/openxlings/xlings) 包管理器, 给 xim-pkgindex 打包 |
 | [mcpp-style-ref](mcpp-style-ref/README.md) | Modern / Module C++ (C++23) 编码风格 |
+| [gki](gki/README.md) | 给 Android GKI 内核写模块, 改内核不破坏 KMI |
 
 ## 安装
 

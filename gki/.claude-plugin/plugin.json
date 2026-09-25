@@ -1,0 +1,10 @@
+{
+  "name": "gki",
+  "description": "Build Android GKI kernel modules and make KMI-safe kernel changes for android15-6.6 (6.6.118, KMI 8): symbol lists and trimming, the MODULE_SIG_PROTECT gate, KCFI-safe callbacks, vendor hooks, kprobes, and what a self-built kernel must keep for stock vendor modules.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": { "name": "yspbwx2010" },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": ["gki", "kmi", "android", "kernel", "arm64", "vendor-hooks", "kcfi", "kernel-module"],
+  "skills": "./skills/"
+}

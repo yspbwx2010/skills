@@ -17,6 +17,7 @@ Each skill installs on its own, take only the ones you want
 | [mcpp](mcpp/README.en.md) | Build C++23 module projects with [mcpp](https://github.com/mcpp-community/mcpp); package libraries for mcpp-index |
 | [xlings](xlings/README.en.md) | Use the [xlings](https://github.com/openxlings/xlings) package manager; write xim-pkgindex packages |
 | [mcpp-style-ref](mcpp-style-ref/README.en.md) | Modern / Module C++ (C++23) coding style |
+| [gki](gki/README.en.md) | Write Android GKI kernel modules; change the kernel without breaking the KMI |
 
 ## Install
 
