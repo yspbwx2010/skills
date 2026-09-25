@@ -1,0 +1,19 @@
+{
+  "name": "xlings",
+  "description": "Use the xlings package manager: install, remove and multi-version use, SubOS creation and sandboxing, project-mode .xlings.json, custom index repos, mirrors and CN networking, machine-readable output, writing xim-pkgindex packages, and the mcpp/xlings integration.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "yspbwx2010"
+  },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": [
+    "xlings",
+    "xim",
+    "package-manager",
+    "subos",
+    "mcpp",
+    "toolchain"
+  ],
+  "skills": "./skills/"
+}

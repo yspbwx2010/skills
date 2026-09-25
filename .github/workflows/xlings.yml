@@ -1,0 +1,31 @@
+name: xlings
+
+on:
+  push:
+    branches: [main]
+    paths: ["xlings/**", ".github/workflows/xlings.yml"]
+  pull_request:
+    paths: ["xlings/**", ".github/workflows/xlings.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: xlings
+
+jobs:
+  xlings:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agent Skills spec (frontmatter, size, links)
+        run: python3 tools/validate_skill.py

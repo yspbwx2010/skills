@@ -1,0 +1,31 @@
+name: mcpp-style-ref
+
+on:
+  push:
+    branches: [main]
+    paths: ["mcpp-style-ref/**", ".github/workflows/mcpp-style-ref.yml"]
+  pull_request:
+    paths: ["mcpp-style-ref/**", ".github/workflows/mcpp-style-ref.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: mcpp-style-ref
+
+jobs:
+  mcpp-style-ref:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agent Skills spec (frontmatter, size, links)
+        run: python3 tools/validate_skill.py

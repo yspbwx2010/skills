@@ -29,6 +29,24 @@
       "description": "Develop a metamodule: the pluggable mount/install backend for KernelSU (and APatch) modules \u2014 metamount.sh / metainstall.sh / metauninstall.sh, boot order, source=KSU",
       "source": "./metamodule",
       "category": "development"
+    },
+    {
+      "name": "mcpp",
+      "description": "Use the mcpp C++23 modules build tool: build, test and gate, mcpp.toml field by field, workspaces, toolchains, cross-compilation and bare metal, cache discipline, machine-readable output for CI, contributing to mcpp itself, and packaging a library into mcpp-index.",
+      "source": "./mcpp",
+      "category": "development"
+    },
+    {
+      "name": "xlings",
+      "description": "Use the xlings package manager: install, remove and multi-version use, SubOS creation and sandboxing, project-mode .xlings.json, custom index repos, mirrors and CN networking, machine-readable output, writing xim-pkgindex packages, and the mcpp/xlings integration.",
+      "source": "./xlings",
+      "category": "development"
+    },
+    {
+      "name": "mcpp-style-ref",
+      "description": "Modern/Module C++ (C++23) coding style from the mcpp community's mcpp-style-ref: identifier naming, module and .cppm/.cpp organisation, import std, and everyday idioms (auto, brace init, smart pointers, string_view, optional/expected, RAII).",
+      "source": "./mcpp-style-ref",
+      "category": "development"
     }
   ]
 }

@@ -1,0 +1,20 @@
+{
+  "name": "mcpp",
+  "description": "Use the mcpp C++23 modules build tool: build, test and gate, mcpp.toml field by field, workspaces, toolchains, cross-compilation and bare metal, cache discipline, machine-readable output for CI, contributing to mcpp itself, and packaging a library into mcpp-index.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "yspbwx2010"
+  },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": [
+    "mcpp",
+    "cpp",
+    "cpp23",
+    "modules",
+    "build-system",
+    "cross-compilation",
+    "mcpp-index"
+  ],
+  "skills": "./skills/"
+}

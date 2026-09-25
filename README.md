@@ -14,6 +14,9 @@
 | [kpm](kpm/README.md) | 编写 [KernelPatch](https://github.com/bmax121/KernelPatch) 模块 (KPM) |
 | [apm](apm/README.md) | 编写 Magisk 模块 (APM) |
 | [metamodule](metamodule/README.md) | 编写 [metamodule](https://kernelsu.org/zh_CN/guide/metamodule.html) (元模块) |
+| [mcpp](mcpp/README.md) | 用 [mcpp](https://github.com/mcpp-community/mcpp) 构建 C++23 模块项目, 给 mcpp-index 打包 |
+| [xlings](xlings/README.md) | 用 [xlings](https://github.com/openxlings/xlings) 包管理器, 给 xim-pkgindex 打包 |
+| [mcpp-style-ref](mcpp-style-ref/README.md) | Modern / Module C++ (C++23) 编码风格 |
 
 ## 安装
 
@@ -47,4 +50,4 @@ npx skills add yspbwx2010/skills --list      # 查看仓库里的全部 skill
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE), [mcpp-style-ref](mcpp-style-ref/README.md) 除外 (CC BY-NC-SA 4.0, 取自上游)

@@ -14,6 +14,9 @@ Each skill installs on its own, take only the ones you want
 | [kpm](kpm/README.en.md) | Write [KernelPatch](https://github.com/bmax121/KernelPatch) modules (KPM) |
 | [apm](apm/README.en.md) | Write Magisk modules (APM) |
 | [metamodule](metamodule/README.en.md) | Write a [metamodule](https://kernelsu.org/guide/metamodule.html) |
+| [mcpp](mcpp/README.en.md) | Build C++23 module projects with [mcpp](https://github.com/mcpp-community/mcpp); package libraries for mcpp-index |
+| [xlings](xlings/README.en.md) | Use the [xlings](https://github.com/openxlings/xlings) package manager; write xim-pkgindex packages |
+| [mcpp-style-ref](mcpp-style-ref/README.en.md) | Modern / Module C++ (C++23) coding style |
 
 ## Install
 
@@ -47,4 +50,4 @@ For the full layout and the steps to add a skill, see [AGENTS.md](AGENTS.md)
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), except [mcpp-style-ref](mcpp-style-ref/README.en.md) (CC BY-NC-SA 4.0, copied from upstream)
