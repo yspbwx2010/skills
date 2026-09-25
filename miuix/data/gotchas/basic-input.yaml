@@ -1,0 +1,517 @@
+# Basic input and content controls
+# Evidence paths are relative to the miuix repo root (https://github.com/compose-miuix-ui/miuix)
+# Common prefix ui/basic/ = miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/
+
+Button:
+  summary: "Miuix's basic button, squircle corners + content slot (RowScope). The default is a gray-background button; for a blue-background primary button you must explicitly swap colors."
+  gotchas:
+    - text: "The default colors is buttonColors(), whose background is secondaryVariant (light theme 0xFFF0F0F0, a near-white gray; dark 0xFF434343), not the theme color. Writing Button(onClick){Text(\"OK\")} per M3 intuition gives a gray button; for a blue background with white text you must explicitly pass colors = ButtonDefaults.buttonColorsPrimary()."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:181
+    - text: "There is no shape parameter, only cornerRadius(Dp); no elevation / tonalElevation / contentPadding. Shapes other than a rounded rectangle (e.g. a cut corner) are impossible; you can only change the radius. The padding parameter is called insideMargin."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:76
+    - text: "Button's content slot injects no text style; a bare Text inside it gets LocalTextStyles.main (17sp) rather than textStyles.button; only TextButton explicitly applies textStyles.button. The two happen to both be 17sp, so no difference shows today, but relying on this is unsafe."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:147
+    - text: "minWidth/minHeight go through defaultMinSize and can be overridden by an external modifier's size/widthIn (the opposite of Switch/Checkbox's requiredSize)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:67
+  visual:
+    min_size: 58×40.dp (defaultMinSize, overridable by modifier)
+    corner: 16.dp squircle (not RoundedCornerShape)
+    inside_margin: "horizontal 16.dp / vertical 13.dp"
+  state: "Purely stateless. onClick is required and non-null; when enabled=false, clickable is turned off and it switches to disabledColor/disabledContentColor. contentColor is propagated via CompositionLocalProvider(LocalContentColor), so the inner Icon/Text follow the color automatically."
+  m3: "Corresponds to androidx.compose.material3.Button. Differences: the default fill is gray, not primary; no elevation/ripple (press feedback comes from MiuixIndication's alpha overlay); shape→cornerRadius:Dp; contentPadding→insideMargin; none of the ElevatedButton/OutlinedButton/FilledTonalButton variants."
+
+TextButton:
+  summary: "A convenience wrapper for a button with text; internally it maps TextButtonColors to ButtonColors and delegates to Button. Note it also has a background by default."
+  gotchas:
+    - text: "colors is of type TextButtonColors, not ButtonColors; the two classes' fields correspond one-to-one but with different names (contentColor vs textColor). Passing ButtonDefaults.buttonColorsPrimary() to TextButton fails to compile; you must use textButtonColorsPrimary()."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:119
+    - text: "The default background is secondaryVariant (gray), not transparent. M3's TextButton is a background-less text-only button; Miuix's TextButton is just 'Button + an auto-wrapped Text' and looks exactly like Button. For a transparent button you must pass color = Color.Transparent yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:217
+    - text: "There is no content slot; you can only pass a String. To place an icon + text, use Button directly. textStyle is nullable; when null it uses MiuixTheme.textStyles.button."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Button.kt:121
+  visual:
+    min_size: 58×40.dp (same as Button)
+    corner: 16.dp squircle
+  state: "Purely stateless; all parameters are passed through to Button."
+  m3: "Corresponds to material3.TextButton. The differences are large: M3's TextButton has no background and no border, while Miuix's has a gray fill by default; and its colors type is separate and not interchangeable with Button's."
+
+IconButton:
+  summary: "An icon-only button, transparent background by default, 40×40, fully pill-shaped corners. Commonly used in TopAppBar / toolbars."
+  gotchas:
+    - text: "enabled=false merely swaps the whole clickable for an empty Modifier and does no graying-out. A disabled-state icon looks identical to the enabled state, so users can't tell it isn't clickable. To show disabled state you must dim the Icon tint in content yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/IconButton.kt:63
+    - text: "There is no IconButtonColors class, only a bare backgroundColor: Color, defaulting to Color.Unspecified (transparent). There is also no contentColor —— the icon color is entirely decided by the external LocalContentColor; IconButton injects none."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/IconButton.kt:45
+    - text: "It exposes no interactionSource / indication parameter and builds its own MutableInteractionSource internally. To observe the pressed state externally you can only drive it in reverse via holdDownState (which mirrors the boolean into a HoldDownInteraction)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/IconButton.kt:51
+  visual:
+    min_size: 40×40.dp (defaultMinSize, overridable)
+    corner: 40.dp squircle —— equals MinHeight, i.e. fully pill/circular by default
+  state: "Purely stateless. onClick is required. When holdDownState=true it stays in the pressed visual (used for 'menu is open, keep the anchor highlighted')."
+  m3: "Corresponds to material3.IconButton. Differences: M3 has IconButtonColors (including disabledContentColor) that automatically grays the disabled-state icon, which Miuix does not do at all; M3 defaults to a 48dp touch target, Miuix is 40dp with no minimumInteractiveComponentSize compensation."
+
+FloatingActionButton:
+  summary: "A floating action button, 60×60 true circle (built on Surface + CircleShape, not squircle), with a 4.dp shadow."
+  gotchas:
+    - text: "When it delegates to Surface it passes only color=containerColor and no contentColor, so Surface uses the default MiuixTheme.colorScheme.onSurface to provide LocalContentColor. Result: the Icon in the default blue FAB gets onSurface (a dark text color) instead of onPrimary, which in a light theme is a 'blue background with a black icon'. You must explicitly write tint = MiuixTheme.colorScheme.onPrimary in content —— example/shared/src/commonMain/kotlin/AppContent.kt:645 does exactly this, but the example in the official docs docs/components/floatingactionbutton.md:24 omits it, so copying the docs gives the wrong contrast."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/FloatingActionButton.kt:46
+    - text: "It is the only button at this layer that still exposes shape: Shape (default CircleShape), because it builds on Surface rather than squircleSurface. So the FAB is a mathematically exact circle, not the same curvature as the squircle outline of adjacent Card/Button."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/FloatingActionButton.kt:39
+    - text: "There is no enabled parameter, so it can't be disabled; there is also no extended (icon + text) variant, and the width is driven by content (minWidth is only defaultMinSize)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/FloatingActionButton.kt:36
+  visual:
+    min_size: 60×60.dp (defaultMinSize)
+    shape: CircleShape (true circle, not squircle)
+    shadow: 4.dp (graphicsLayer shadowElevation, clip=false)
+  state: "Purely stateless, marked @NonRestartableComposable. Positioning/avoidance is left entirely to the caller (Scaffold has a floatingActionButton slot)."
+  m3: "Corresponds to material3.FloatingActionButton. Differences: no elevation state changes (no rise on press), no SmallFAB/LargeFAB/ExtendedFAB variants, no enabled, and the content color is not automatically taken as onPrimary (see above)."
+
+Card:
+  summary: "A rounded-corner container with two overloads: one with no input and one with onClick/onLongPress. Default padding is 0; it is often used as the shell around a list item, wrapping a BasicComponent."
+  gotchas:
+    - text: "insideMargin defaults to PaddingValues(0.dp), not 16.dp. Dropping a Text into a Card per M3 intuition makes it hug the edge. This is deliberate (it usually holds a BasicComponent/Preference that carries its own 16.dp padding), but placing custom content directly requires passing insideMargin yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Card.kt:195
+    - text: "The clickable overload's pressFeedbackType defaults to None and showIndication defaults to false —— meaning a Card given an onClick has no visual feedback on tap by default. For a sink animation pass pressFeedbackType = PressFeedbackType.Sink (or Tilt); for an alpha overlay pass showIndication = true; the two are independent channels."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Card.kt:92
+    - text: "The two overloads share exactly the same leading parameters and all have defaults, so `Card { }` resolves to the no-input overload (Kotlin picks the more specific, fewer-parameter overload). Passing any named parameter unique to the interactive overload (any one of pressFeedbackType / showIndication / holdDownState / onClick / onLongPress) resolves to the interactive overload. But only onClick and onLongPress actually make it clickable —— Card.kt:118 `isClickable = hasOnClick || hasLongPress`, so writing only showIndication = true gives a Card that took the interactive overload yet installs no combinedClickable, and tapping it does nothing."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Card.kt:87
+    - text: "Press feedback uses pressable(delay = null), skipping Pressable's default 150ms TAP_INDICATION_DELAY (that delay exists to distinguish 'press' from 'start scrolling'). Put a Card with Sink/Tilt in a scrollable list and swiping a finger across it triggers the sink animation immediately."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Card.kt:140
+  visual:
+    corner: 16.dp squircle
+    inside_margin: PaddingValues(0.dp) (no padding by default)
+    colors: surfaceContainer / onSurfaceContainer
+  state: "Purely stateless. onClick / onLongPress are both nullable; when both are null no combinedClickable is installed. holdDownState goes through HoldDownObserver. Physical feedback (Sink/Tilt) is attached to the card's outer modifier, and the alpha overlay is attached to the inner Column."
+  m3: "Corresponds to material3.Card / Card(onClick=). Differences: no elevation/border/CardColors 4-color system (only color+contentColor); a tap has no ripple and no feedback by default; default contentPadding is 0 (M3 is also 0, but M3's ListItem is not); adds the pressFeedbackType physical-deformation feedback."
+
+Surface:
+  summary: "The lowest-level container primitive: shape + background + optional border + optional shadow. It is the only container at this layer that still accepts an arbitrary Shape, and FloatingActionButton is built on top of it."
+  gotchas:
+    - text: "The default shape is RectangleShape, not rounded. For rounded corners you must pass shape yourself; and it uses a standard Compose Shape rather than squircle, so its outline curvature differs from Card/Button and the difference shows when mixed."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Surface.kt:150
+    - text: "The non-interactive overload adds semantics{isTraversalGroup = true}; the overload with onClick does not. That means a clickable Surface is not an accessibility traversal group, so screen-reader order may differ from what you expect."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Surface.kt:107
+    - text: "A graphicsLayer is inserted only when shadowElevation>0, with clip=false —— the shadow is drawn outside the clip. The background is drawn by background() after clip(shape), so the border is clipped by the shape. There is no tonalElevation (Miuix does no elevation tonal lightening)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Surface.kt:134
+  visual:
+    shape: RectangleShape (default)
+    shadow: 0.dp (no shadow by default)
+    colors: surface / onSurface
+  state: "Purely stateless. Two overloads: one without onClick and one with. Both have propagateMinConstraints=true (min constraints are passed to content) and propagate contentColor via LocalContentColor."
+  m3: "Corresponds to material3.Surface. Differences: no tonalElevation (M3 uses it for dark-mode lightening), only shadowElevation; no checked/selected overloads."
+
+Text:
+  summary: "A thin wrapper over BasicText; the default style is taken from LocalTextStyles.current.main (17sp). Four overloads: String/AnnotatedString × Color/ColorProducer."
+  gotchas:
+    - text: "LocalTextStyles is internal and unavailable outside the library, so you can't use CompositionLocalProvider to swap the default text style for a subtree. To override locally you can only nest MiuixTheme(textStyles = ...) (copying the entire 14-item TextStyles bag), or pass style explicitly on every Text. Miuix also has no single-value LocalTextStyle like M3's."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:250
+    - text: "The color fallback chain is explicit color → style.color → LocalContentColor, and LocalContentColor's default is Color.Black. MiuixTheme's controller overload provides LocalContentColor, but the MiuixTheme(colors = ...) overload does not —— with the latter in a dark theme, a Text with no explicit color will be black text on a black background."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/MiuixTheme.kt:62
+    - text: "The ColorProducer overload's lambda is not a composable context (ColorProducer is an ordinary fun interface, and Text is not inline), so writing MiuixTheme.colorScheme.xxx inside it fails to compile. The theme color must be read outside first and then passed into the lambda. The example in the docs components/text.md is wrong."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Text.kt:191
+    - text: "The AnnotatedString overload automatically adds 'primary color + underline' to every LinkAnnotation that doesn't already carry a style. For a different link style you must fill in styles when constructing the AnnotatedString, or it will be overwritten."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Text.kt:315
+    - text: "Within the same file onTextLayout has two signatures: the String overload is ((TextLayoutResult)->Unit)? = null, and the AnnotatedString overload is (TextLayoutResult)->Unit = {}. Passing null when switching overloads fails to compile."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Text.kt:309
+    - text: "The AnnotatedString overload's inlineContent is a bare Map, which is unstable to Compose and prevents this Text from skipping recomposition."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Text.kt:308
+  visual:
+    default_style: LocalTextStyles.current.main = 17.sp
+    overflow: TextOverflow.Clip (no ellipsis by default)
+  state: "Purely stateless. The ColorProducer overload is a zero-recomposition channel for 'high-frequency color changes'; the color is read at draw time, skipping the entire color fallback chain."
+  m3: "Corresponds to material3.Text. Differences: the default style comes from LocalTextStyles.main rather than an externally providable LocalTextStyle; the theme's text styles are a 14-item bag, and you can't override just one item; it adds automatic link coloring."
+
+TextField:
+  summary: "A filled text field, squircle background + a 2.dp border that grows on focus + a floating label. Three overloads correspond to the TextFieldState / TextFieldValue / String state models."
+  gotchas:
+    - text: "In the TextFieldState overload, remember(label, useLabelAsPlaceholder){ derivedStateOf { … state.text … } } has no state in its key, yet the closure reads it. After swapping the TextFieldState instance (e.g. rebuilding state per form-field id, or switching the edited object at the same position), the label state machine keeps watching the old instance forever: typing in the new field doesn't float the label up, and clearing doesn't drop it back. The other two overloads put the value in the key; only this one doesn't. Workaround: wrap this position in key(state){ … } or use the String overload."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TextField.kt:108
+    - text: "TextFieldColors has only three fields — backgroundColor / labelColor / borderColor — with no disabled or error variants. A field with enabled=false looks exactly like an enabled one (it just doesn't respond to input), and the error state has no built-in appearance at all —— you must draw it yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TextField.kt:419
+    - text: "There are no placeholder / supportingText / isError / prefix / suffix / shape parameters, and no OutlinedTextField variant. The placeholder role is served by label + useLabelAsPlaceholder=true (when there is text the label simply isn't drawn, rather than floating up)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TextField.kt:89
+    - text: "insideMargin is a DpSize (a horizontal and a vertical value) rather than PaddingValues, so asymmetric padding is impossible. Also the label and the input area are overlaid in the same Box, offset by ±insideMargin.height/2, so shrinking insideMargin.height clips the floated-up label."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TextField.kt:379
+    - text: "The label's font-size animation is carried by animateDpAsState and consumed via `.value.sp` (Compose has no ready-made TextUnit animation, TextField.kt:451/525). Note Dp is only the animation carrier; after `.value` takes the raw Float it still sets fontSize in sp, so the label size scales with system font size like the body text. What does not scale is the float-up offset ±insideMargin.height/2 (DpSize, TextField.kt:446/533): with a larger font the gap between label and body text doesn't grow proportionally, so the floated-up state may sit too close."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TextField.kt:525
+  visual:
+    corner: 16.dp squircle
+    inside_margin: DpSize(16.dp, 16.dp)
+    border: 0.dp when unfocused, animates up to 2.dp on focus, color gradients from backgroundColor to primary
+    label_font: "17 in resting state (dp used as sp), 10 when floated up"
+    colors: secondaryContainer background / onSecondaryContainer label / primary border and cursor
+  state: "Choose one of three models: TextFieldState (self-holding, recommended), TextFieldValue+onValueChange, or String+onValueChange (the latter two are purely controlled). The focus state is driven by interactionSource.collectIsFocusedAsState, and when null is passed it is built internally. cursorBrush defaults to colors.borderColor."
+  m3: "Corresponds to material3.TextField / OutlinedTextField. Differences: only one appearance (filled squircle); no isError/supportingText/placeholder/prefix/suffix; no disabled colors; the focus indicator is a border growing from 0 to 2.dp rather than an underline."
+
+InputField:
+  summary: "A pill-shaped input field dedicated to SearchBar (defined in SearchBar.kt, not TextField.kt). It ships with a search icon, a clear button, and an IME Search action, and must be used paired with the expanded state."
+  gotchas:
+    - text: "It clears the text on collapse: in LaunchedEffect(expanded), when expanded becomes false and it currently has focus, it delays(100), fades the text out, and calls onQueryChange(\"\"). That is, collapsing the search box = discarding the user's input; this is not optional and there is no toggle."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:302
+    - text: "In onFocusChanged, as soon as it gains focus it unconditionally calls onExpandedChange(true). So expanded / onExpandedChange must actually be wired to a state; using it as an ordinary input field (writing onExpandedChange as an empty lambda) makes it fail to expand on tap and gives wrong keyboard and clear-button behavior."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:242
+    - text: "On Android SDK ≤ 27 there is a system bug in focus reassignment (issuetracker 433382598). The code's workaround is: in the collapsed state, set BasicTextField's enabled to false and take over taps via pointerInput. The condition is `hasFocusReassignBug = Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1` (miuix-core/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.android.kt:24), and the library's minSdk is 24 (build-plugins/src/main/kotlin/BuildConfig.kt:14), so it actually affects API 24-27 (the comment at SearchBar.kt:226 says 'API 26-27', which is narrower than the implementation). On these versions the collapsed-state InputField is not a truly enabled input field."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:249
+    - text: "If leadingIcon/trailingIcon are not passed, you get the built-in search icon and clear button (the clear button fades in only when query is non-empty, and a tap calls onQueryChange(\"\")). Passing custom icons removes the clear functionality entirely and you must implement it yourself. The default background is surfaceContainerHigh; to draw your own background (e.g. a blur backdrop) pass color = Color.Transparent."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:188
+  visual:
+    shape: CircleShape pill
+    min_height: 45.dp (SearchBarDefaults.InputFieldMinHeight)
+    label_font: 17.sp Medium
+    icon_padding: "leading icon start 16 / end 8, trailing icon start 8 / end 16"
+  state: "Purely controlled and tightly coupled: the four-piece set query/onQueryChange and expanded/onExpandedChange are all required. singleLine is hardcoded to true and imeAction hardcoded to Search. The text style = textStyles.main + Medium, then merged with the caller's textStyle, and the color is forced to LocalContentColor."
+  m3: "Corresponds to material3.SearchBarDefaults.InputField. Behavior is close, but the Miuix version actively clears query on collapse and has no placeholder parameter (label serves that role)."
+
+Checkbox:
+  summary: "A tri-state checkbox, circular (not square), fixed 26.dp size; the check mark is a hand-drawn animation clipped by arc length."
+  gotchas:
+    - text: "The API is Checkbox(state: ToggleableState, onClick: (() -> Unit)?); there is no Boolean + onCheckedChange overload. Writing Checkbox(checked = x, onCheckedChange = { }) per M3 fails to compile. The correct form passes ToggleableState(bool) (or On/Off/Indeterminate), with onClick taking no argument and the caller computing the next state itself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:60
+    - text: "The size uses requiredSize(26.dp) placed after modifier, so it ignores externally passed constraints. Wrapping it in Modifier.size(40.dp) or sizeIn(min = 48.dp) changes nothing —— the touch hit area is always 26.dp (below the 48dp accessibility minimum target, with no compensating padding). To enlarge the hit area you must wrap it in your own clickable Box."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:173
+    - text: "Miuix's Checkbox is circular (CircleShape); the unchecked state is a filled gray circle (uncheckedBackgroundColor = secondary), not M3's hollow rounded square. Visually it belongs to the same family as Switch/RadioButton and matches no M3 design mockup."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:141
+    - text: "The sink feedback (SinkFeedback 0.85) is attached via pressable and controlled by the enabled parameter, not by onClick. A 'read-only' checkbox with onClick=null still shrinks a bit when pressed but its state doesn't change, which is easily mistaken for a broken tap. For it to be fully silent you also need enabled=false."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:174
+    - text: "The internal triStateToggleable is passed a null interactionSource, pressable uses its own private source, and the component exposes no interactionSource parameter. There is no way to observe its pressed/hovered state externally."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:160
+  visual:
+    size: 26×26.dp (requiredSize, not adjustable via modifier)
+    shape: CircleShape (circular)
+    stroke: check-mark stroke width = 9% of size (about 2.34.dp at 26.dp), round cap and join
+    anim: background/foreground color tween(300), check-mark alpha enter 10ms / exit 150ms, the check tip overshoots (0.85 at 200ms → 0.803 at 300ms)
+  state: "Purely controlled. Both state and onClick are required (onClick can be explicitly null → degrades to a pure semantics node, non-interactive). The Indeterminate state is not a separate path; it lerps the check's three points toward the center, collapsing them into a horizontal line. The haptic type is decided by the current state at press time."
+  m3: "Corresponds to material3.TriStateCheckbox (not Checkbox). Differences: no Boolean convenience overload, no interactionSource parameter, circular rather than rounded square, size hardcoded to 26.dp and unchangeable, no 48dp touch-target compensation."
+
+Switch:
+  summary: "A switch. A 49×28 pill track + 20.dp thumb, with half-sensitivity dragging and hysteresis haptics; it is the most finely tuned component at this layer for feel."
+  gotchas:
+    - text: "onCheckedChange is nullable but has no default, so it is required. For a read-only switch you must explicitly write onCheckedChange = null (the component then degrades to a pure semantics node, recognizable by screen readers but non-interactive); simply omitting the parameter fails to compile."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:68
+    - text: ".size(49.dp, 28.dp) placed after modifier silently overrides the caller's size. Passing Modifier.size(80.dp, 40.dp) doesn't give a large switch, only a 49×28 switch centered in an empty 80×40 box (there's also a wrapContentSize(Center) before it). The switch size is entirely non-configurable in the current implementation."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:143
+    - text: "The drag gesture is attached only to the 20.dp thumb, not the track. Pressing and dragging horizontally on an empty part of the track won't move the thumb (it's only recognized as a tap toggle or swallowed by the parent's scroll)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:168
+    - text: "The parameter order is (checked, onCheckedChange, modifier, colors, enabled) —— colors comes before enabled, deviating from the template order mandated by AGENTS.md:107-127 (boolean flags should come before visual parameters). Checkbox / RadioButton / TextField / BasicComponent deviate likewise; those that follow the template (enabled before colors) are Button / Slider / NumberPicker. So passing the fourth argument positionally fails to compile due to a type mismatch; always use named arguments."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:70
+    - text: "Under Monet dynamic color (colorSchemeMode being MonetSystem/MonetLight/MonetDark), the off-state thumb color is special-cased to onSurface.copy(0.38f) rather than onSecondary. If you copy the non-dynamic-color branch when customizing SwitchColors, the thumb and track will clash in color under dynamic color."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:232
+  visual:
+    size: 49×28.dp (fixed, placed after modifier, not adjustable via modifier)
+    shape: CircleShape pill
+    thumb: 20.dp circle; off-state offset 4.dp, on-state 25.dp, travel 21.dp; scales to 1.127 on press/drag/hover
+    anim: "thumb displacement spring(0.7, 987) and scale spring(0.6, 987) correspond to Folme response 0.2s; track color change spring(0.99, 438.6) corresponds to 0.3s"
+  state: "Purely controlled. Drag displacement is added directly into the spring target value (so the drag itself is also damped); only when released past the halfway point (>10.5) does it invoke(!checked), and it only settles once the external checked is updated. The haptics are a hysteresis state machine: reset at the midpoint, fire at the endpoints, and on release, if it hasn't fired along the way, fire once more."
+  m3: "Corresponds to material3.Switch. Differences: no thumbContent slot, no track border, doesn't use AnchoredDraggable but a hand-written draggable + half-sensitivity; SwitchColors has only 8 fields (M3 has 12+); the size is entirely hardcoded."
+
+RadioButton:
+  summary: "A radio button, but it draws a 'check mark' rather than a ring —— when unselected there is nothing on screen. It reproduces the look of HyperOS single-choice lists."
+  gotchas:
+    - text: "When unselected it is completely invisible: alpha=0 and trimEnd=0, the draw function returns at the very start, and the 26.dp area is entirely empty. Placing it at the right end of a list item (a check on the selected item, blank for the rest) is correct, but used as a standalone control (e.g. a row of side-by-side options) users can't tell where to tap at all. For that scenario use Checkbox or draw your own ring."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/RadioButton.kt:189
+    - text: "The size is requiredSize(26.dp) placed after modifier; it can't be enlarged externally nor can the touch hit area be expanded, same as Checkbox."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/RadioButton.kt:121
+    - text: "RadioButtonColors has only two fields, selectedColor / disabledSelectedColor —— because the unselected state draws nothing at all, there is no 'unselected color' concept to configure."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/RadioButton.kt:226
+    - text: "onClick is nullable but required (same as Checkbox). There is no RadioGroup / mutual-exclusion container; the single-choice semantics (who is selected, whom to clear on a tap) are entirely maintained by the caller; the internal selectable also explicitly disables indication."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/RadioButton.kt:61
+    - text: "Its check mark and Checkbox's come from two different design mockups (RadioButton is a 56 viewport, 12.5% stroke; Checkbox is a 23 viewport, 9% stroke), so after normalization the shapes differ. When the two appear side by side, the check-mark thickness and corner angle show a visible difference."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/RadioButton.kt:131
+  visual:
+    size: 26×26.dp (requiredSize, not adjustable)
+    unselected: not drawn at all (no ring, no border)
+    stroke: 7/56 ≈ 12.5% width (about 3.25.dp at 26.dp)
+    anim: alpha enter 10ms / exit 150ms, check-mark trimEnd tween(300, FastOutSlowIn)
+  state: "Purely controlled. selected + onClick are required; when onClick=null it degrades to a pure semantics node. The press sink feedback is the same as Checkbox (SinkFeedback 0.85, pressable delay=null), controlled by enabled rather than onClick."
+  m3: "Corresponds to material3.RadioButton. The differences are huge: M3 draws a hollow ring when unselected, Miuix draws nothing; M3 has unselectedColor/disabledUnselectedColor, Miuix does not; the size is not adjustable; no 48dp touch-target compensation."
+
+Slider:
+  summary: "A horizontal slider. A thick pill track (28.dp) with an embedded white-dot thumb, supporting steps hard-stepping or keyPoints magnetic snapping, with three levels of haptic feedback."
+  gotchas:
+    - text: "showKeyPoints's KDoc says 'Only works when keyPoints is not null', which is the opposite of the implementation and wrong both ways: (1) passing keyPoints without showKeyPoints=true, the key points aren't drawn (but snapping still works); (2) without keyPoints, with only steps>0 and showKeyPoints=true, the step points are drawn normally. To display key points you must explicitly set showKeyPoints = true."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:1328
+    - text: "The accessibility setProgress action is attached to semantics, outside the enabled check. When enabled=false all gesture Modifiers are removed, but screen-reader software can still call setProgress to change the value and trigger onValueChange —— a disabled slider is writable by accessibility services."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:245
+    - text: "onDragStarted immediately computes the value from the touch position and calls back, meaning a tap anywhere on the track jumps the thumb straight there (unlike M3, where you must drag the thumb itself). There is no toggle to disable this behavior."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:220
+    - text: "Two require checks throw during composition rather than silently falling back: steps must be >= 0, and valueRange.start must be strictly less than endInclusive. Using 0f..0f or a reversed range crashes outright."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:104
+    - text: "isPressed (collectIsPressedAsState) is always false: nothing in the whole file emits a PressInteraction to interactionSource (interactionSource is only wired to hoverable and indication(_, null); draggable doesn't take it). So the thumb enlargement is driven only by dragging and mouse hover; a touchscreen 'press and hold' doesn't enlarge it. Likewise .indication(interactionSource, null) is a no-op."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:119
+    - text: "steps > 0 and keyPoints are two mutually exclusive branches, with steps taking priority: whenever steps>0, the magnetThreshold and keyPoints snapping logic is never reached. The key-point radius in Slider is barHeight/7.5 (3.733.dp at 28.dp), while RangeSlider uses SliderDefaults.KeyPointRadius = 3.855.dp, a 3% difference when placed side by side on the same page."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:1264
+  visual:
+    track: 28.dp tall (SliderDefaults.MinHeight), clipped into a pill, width fillMaxWidth
+    thumb: radius = track radius × 0.72 (diameter about 20.2.dp at 28.dp), drawn inside the track; ×1.127 on drag/hover
+    press: during drag the whole track overlays a 4.4% black layer (tween 150)
+    key_point: radius barHeight/7.5
+  state: "Purely controlled. onValueChange fires every frame, onValueChangeFinished fires once on release. value is coerceIn'd to valueRange, and the displayed value goes through animateFloatAsState (spring(0.9,1755), stiffer, during drag; spring(0.96,322), softer, after release). Three haptic levels: None / Edge (default, only 0% and 100%) / Step."
+  m3: "Corresponds to material3.Slider. Differences: no thumb/track slots; the appearance is 'a small dot embedded in a thick track' rather than 'a thin track + a large thumb outside the track'; adds keyPoints snapping, reverseDirection, hapticEffect; the touch target is only 28.dp."
+
+VerticalSlider:
+  summary: "A vertical slider, the same algorithm as Slider with height swapped for width. By default it grows from bottom to top."
+  gotchas:
+    - text: "The parameter effect: Boolean = false is never referenced anywhere in the function body; it is a completely dead parameter (the docs slider.md even describe it as 'whether to show a special effect'). Passing true does nothing."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:306
+    - text: "reverseDirection's meaning is opposite to the horizontal version: horizontal false = left to right, vertical false = bottom to top (true is top to bottom). Also the vertical version doesn't read LocalLayoutDirection at all and has no RTL mirroring (which vertical genuinely doesn't need, but don't expect symmetry with the horizontal version's behavior)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:861
+    - text: "The size parameter is called width (not height), and its default still reuses SliderDefaults.MinHeight = 28.dp. The length is provided by an external modifier (internally it's fillMaxHeight), so placed in a parent with unbounded height it collapses to 0."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:470
+    - text: "Like the horizontal Slider, when enabled=false the setProgress semantics are still writable; isPressed is likewise always false. It also doesn't attach .hoverable, so its structure is asymmetric with the horizontal version (hover detection is maintained by a bare pointerInput; functionality is unaffected)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:448
+  visual:
+    track: 28.dp wide (default, parameter name width), height fillMaxHeight, clipped into a pill
+    thumb: same as Slider, radius = track radius × 0.72
+    direction: bottom to top when reverseDirection=false
+  state: "Same as Slider: purely controlled, onValueChange + onValueChangeFinished, with progressBarRangeInfo/setProgress accessibility semantics."
+  m3: "No counterpart (Material3 has no official vertical Slider)."
+
+RangeSlider:
+  summary: "A two-thumb range slider. It has cross-over takeover logic (once the two values coincide, pushing further automatically switches which side is being dragged)."
+  gotchas:
+    - text: "Accessibility is incomplete: semantics has only a stateDescription string, no progressBarRangeInfo and no setProgress (both of which Slider and VerticalSlider have). A screen reader can read out the current range but cannot adjust it at all."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:793
+    - text: "During a drag it ignores the externally passed value (it only syncs its local mirror when !isDragging). So a controlled pattern like 'clamp/quantize the value in onValueChange and write it back' doesn't take effect during the drag; only after release is it overwritten by the external value."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:538
+    - text: "There is no reverseDirection parameter (direction only auto-mirrors with RTL), and no 'minimum gap' parameter —— the two thumbs can fully coincide, and pushing further after coinciding triggers cross-over takeover, switching the drag target."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:498
+    - text: "value is of type ClosedFloatingPointRange<Float>, written as a..b; it is likewise subject to require(valueRange.start < endInclusive), so a degenerate range crashes during composition. The key-point radius here uses SliderDefaults.KeyPointRadius (3.855.dp), inconsistent with Slider's barHeight/7.5."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:991
+  visual:
+    track: 28.dp tall (height parameter), the span between the two thumbs is the foreground color
+    thumb: two of them, radius = track radius × 0.72, each with independent hover/drag scaling
+    key_point: radius SliderDefaults.KeyPointRadius = 3.855.dp
+  state: "Controlled + a local mirror during drag. onValueChange returns a new ClosedFloatingPointRange. Haptics are managed per side by RangeSliderHapticState, and on cross-over takeover the key-point state is handed over to the other side to avoid duplicate haptics."
+  m3: "Corresponds to material3.RangeSlider. Differences: no startThumb/endThumb/track slots; no setProgress accessibility action; adds keyPoints snapping and hapticEffect."
+
+NumberPicker:
+  summary: "An inertial wheel number picker (the kind in the HyperOS time picker). It simulates depth with scaling + fade, with no 3D cylindrical perspective."
+  gotchas:
+    - text: "Two require checks throw during composition: visibleItemCount must be odd and >= 3, and range must not be empty. Writing visibleItemCount = 4 crashes outright, not silently rounded."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:82
+    - text: "It hardcodes fillMaxWidth() internally, placed after modifier. When several NumberPickers are placed side by side in a Row (the most common hour/minute/second usage), each grabs the full width and causes overflow —— you must pass Modifier.weight(1f) to each."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:161
+    - text: "Fully controlled: after release-and-snap it calls onValueChange(newValue) and immediately snapTo(0f) on the internal offset. If the caller doesn't write the new value back to value (or writes it back a frame late), the view instantly snaps back to the old value. You must never ignore onValueChange."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:217
+    - text: "The height is hardcoded to itemHeight × visibleItemCount (default 45 × 5 = 225.dp), and a height given by an external modifier is overridden. To change the height you can only adjust itemHeight or visibleItemCount."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:162
+    - text: "All item rendering is wrapped in if (itemHeightPx > 0), and itemHeightPx only gets a value after onSizeChanged returns —— the wheel is blank on the first composition frame. When it appears in a dialog/BottomSheet you may see a one-frame blank."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:231
+    - text: "itemHeightPx = size.height / visibleItemCount is integer division, so at densities where 45.dp converts to a non-divisible pixel count it accumulates a few pixels of error, showing as a slight deviation between the wheel item spacing and itemHeight."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NumberPicker.kt:168
+  visual:
+    item_height: 45.dp (NumberPickerDefaults.ItemHeight)
+    total_height: itemHeight × visibleItemCount (default 225.dp, not changeable via modifier)
+    text: default textStyles.title1 (32.sp); if the passed style's fontWeight is null it auto-fills SemiBold
+    falloff: "alpha = (1-d)(1-0.5d), scale = 1-0.2d, color linearly interpolated between selected↔unselected (d is the normalized distance from center)"
+  state: "Purely controlled. value must be updated externally in response to onValueChange. Drag offset and inertial offset are two separate things (dragOffset + Animatable), and after release it runs a four-step coroutine 'transfer → decay → snap → commit → reset'. It fires a haptic each time it crosses an item, and an isUserScrolling gate ensures programmatic value changes don't fire haptics."
+  m3: "No counterpart (Material3 has no wheel picker). The closest is M3's internal TimePicker implementation, but it's not exposed as a public component."
+
+Badge:
+  summary: "The red-dot/number badge itself. With no content it's a 6.dp dot; with content it's a pill of at least 16.dp. It usually goes into BadgedBox's badge slot."
+  gotchas:
+    - text: "Badge itself does no positioning; it's just a rounded Row; the 'floating at the top-right' effect comes entirely from BadgedBox. Using Badge alone you must offset it yourself."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:143
+    - text: "With content it overrides the entire LocalTextStyles via CompositionLocalProvider (replacing main with footnote2 + a 16.sp line height, centered). So a Text inside the badge gets a different default style than outside; this is to keep the number vertically centered under cross-platform font metrics, so don't manually change lineHeight inside it."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:163
+  visual:
+    dot_size: 6.dp (BadgeDefaults.Size, when no content)
+    with_content: minimum 16.dp (LargeSize), plus 4.dp padding on each side
+    shape: CircleShape
+    colors: error background / onError text
+  state: "Purely stateless. content is nullable; whether there is content decides the size and padding."
+  m3: "Corresponds to material3.Badge. The structure is essentially a port of M3 (the same layoutId/Ruler mechanism), with minor numeric tweaks."
+
+BadgedBox:
+  summary: "A layout container that hangs a badge at the anchor's top-right. Its own size exactly equals the anchor, and the badge is drawn overflowing beyond the bounds."
+  gotchas:
+    - text: "The badge measurement only clears minHeight; minWidth is passed through as-is (the comment says 'we don't want the text to take more space than needed', but it only handles height). Once BadgedBox lands in a parent with minWidth > 0 (a fillMaxWidth Row/Column, or any propagateMinConstraints=true container like Card/Surface/Button), the badge is stretched to full width, so hasContent = badgePlaceable.width > 6.dp is inevitably misjudged as true, the whole set of offsets takes the wrong branch (using 12/14.dp instead of 6.dp), and the badge position shifts overall. Workaround: wrap BadgedBox in something like wrapContentWidth to break the minimum-width constraint."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:74
+    - text: "The layout's width and height are taken entirely from the anchor's size. A badge with content (height ≥16.dp, offset 12/14.dp) has a negative y and also overflows on the right, so it gets clipped by an ancestor's clipToBounds / clip(shape) (e.g. Card's squircleSurface, Surface's clip); to leave room you must add padding to the anchor yourself. The content-less 6.dp dot computes x = anchorWidth-6, y = 0, sitting exactly at the edge without overflowing, unaffected by clipping."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:84
+    - text: "It has a built-in Ruler clamping mechanism (BadgeTopRuler/BadgeEndRuler) to keep the badge from crossing a certain ancestor boundary, but the Modifier.badgeBounds() that provides the ruler is internal and unusable outside the library. When no ancestor provides one it degrades to 'no clamping'."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:238
+    - text: "'Whether there is content' is inferred from the badge's measured width > 6.dp, not from whether content is null. Adding Modifier.size(10.dp) to a content-less Badge makes it judged as having content and positioned with the 12/14.dp offset."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Badge.kt:93
+  visual:
+    offset_no_content: 6.dp both horizontal and vertical
+    offset_with_content: horizontal 12.dp / vertical 14.dp
+    baseline: forwards only the anchor's FirstBaseline/LastBaseline; text inside the badge doesn't pollute the parent's baseline alignment
+  state: "A purely stateless layout. The badge parameter is required and comes first; content (the anchor) is the trailing lambda."
+  m3: "Corresponds to material3.BadgedBox. The structure shares an origin, but the M3 version's minWidth handling and offset constants may differ; the Miuix version's failure to zero out minWidth is a genuine behavioral defect."
+
+HorizontalDivider:
+  summary: "A horizontal divider. Implemented with Canvas + drawLine (not Box + background), default 0.75.dp, color dividerLine."
+  gotchas:
+    - text: "It hardcodes fillMaxWidth() internally and always fills the available width. For a list divider with 'left indentation', you can only add padding in the passed-in modifier (padding takes effect before fillMaxWidth); you can't narrow it via width/wrapContentWidth."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Divider.kt:34
+    - text: "Thickness defaults to 0.75.dp, thinner than M3's 1.dp. Using Dp.Hairline gives a density-independent single-pixel line (drawLine's start/end take thickness/2 so the stroke lands exactly on the center line, without half-pixel bleed)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Divider.kt:71
+  visual:
+    thickness: 0.75.dp (DividerDefaults.Thickness)
+    color: MiuixTheme.colorScheme.dividerLine
+  state: "Purely stateless, @NonRestartableComposable."
+  m3: "Corresponds to material3.HorizontalDivider. Differences: default thickness 0.75dp rather than 1dp; implemented with Canvas rather than Box, so things like Modifier.background have no effect on it."
+
+VerticalDivider:
+  summary: "A vertical divider, the symmetric implementation of HorizontalDivider."
+  gotchas:
+    - text: "It hardcodes fillMaxHeight() internally. Placed in a parent with unbounded height (e.g. a Row inside a vertical scroll, or a Row without IntrinsicSize.Min), fillMaxHeight gets no finite constraint and the divider's height collapses to 0 —— looking like it 'wasn't drawn'. The standard fix is to add Modifier.height(IntrinsicSize.Min) or an explicit height to the parent Row."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Divider.kt:57
+  visual:
+    thickness: 0.75.dp
+    color: MiuixTheme.colorScheme.dividerLine
+  state: "Purely stateless, @NonRestartableComposable."
+  m3: "Corresponds to material3.VerticalDivider; the same unbounded-height problem exists in M3 too; the only difference is the default thickness."
+
+Icon:
+  summary: "A monochrome icon container; tint defaults to LocalContentColor, so placed inside Button/Card/Badge it follows the color automatically. Four overloads: ImageVector / ImageBitmap / Painter+Color / Painter+ColorProducer."
+  gotchas:
+    - text: "24.dp is only the fallback when 'the painter has no intrinsic size', not a default size. ImageVector uses its own defaultWidth/defaultHeight, and Miuix's built-in icon sizes are all over the map (ArrowRight 10×16, Search 20×20, Check 26×26, Close/Sidebar 24×24, SearchCleanup 18.199984×18.199984). To unify icon sizes you must pass Modifier.size(...) yourself (the external modifier comes first and correctly overrides the fallback)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Icon.kt:193
+    - text: "contentDescription has no default and is a required parameter; for decorative icons pass null explicitly (when null is passed the component adds no semantics)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Icon.kt:55
+    - text: "The ColorProducer overload's parameter order is (painter, tint, contentDescription, modifier), with tint before contentDescription, the opposite of the other three overloads. Positional arguments silently pick the wrong overload or fail to compile; always name them. It keeps a resident GraphicsLayer to buy 'a tint change only redraws, not recomposes'."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Icon.kt:171
+    - text: "Passing tint = Color.Unspecified means no tinting (use this for multicolor icons); the ColorProducer overload instead passes null to mean no tinting. The two ways of writing 'no tinting' differ."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Icon.kt:131
+  visual:
+    fallback_size: 24.dp (only when the painter has no intrinsic size)
+    content_scale: ContentScale.Fit
+  state: "Purely stateless. tint defaults to LocalContentColor.current, i.e. decided by the containing container (Button/Card/Surface/Badge all provide it)."
+  m3: "Corresponds to material3.Icon. Behavior is essentially the same, with one extra ColorProducer overload. Note Miuix's built-in icons aren't uniformly 24dp like material-icons."
+
+SmallTitle:
+  summary: "A group sub-title for settings pages (the HyperOS-style bluish-gray bold small text). At 43 lines, it's the smallest component at this layer."
+  gotchas:
+    - text: "There are no style / fontSize / fontWeight parameters; the style is hardcoded to MiuixTheme.textStyles.subtitle (14.sp Bold), and you can only change the color and padding. For a different font size you must forgo it and write Text directly."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SmallTitle.kt:25
+    - text: "The default padding is PaddingValues(28.dp, 8.dp) —— the 28.dp horizontal exceeds BasicComponent/Card's 16.dp. This is so the group title left-aligns with the list-item text under the usual layout where 'the Card also has a 12.dp outer margin'; if your Card lacks that 12.dp outer margin, the title will be indented 12.dp more than the body text, and you must pass insideMargin to correct it."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SmallTitle.kt:42
+  visual:
+    style: MiuixTheme.textStyles.subtitle = 14.sp Bold
+    inside_margin: "PaddingValues(28.dp horizontal, 8.dp vertical)"
+    color: MiuixTheme.colorScheme.onBackgroundVariant (0xFF8C93B0 in light, a bluish gray)
+  state: "Purely stateless, @NonRestartableComposable."
+  m3: "No direct counterpart. The closest is M3 ListItem's overline or a hand-drawn section header."
+
+BasicComponent:
+  summary: "The layout skeleton of the entire Miuix list-item/settings-item system (all of miuix-preference is built on it); not a 'visible component'. The structure is [start slot] 8dp [title/summary or arbitrary content] 8dp [end slot], with an optional bottomAction below."
+  gotchas:
+    - text: "AGENTS.md:185 says it's a '2:5:3 weighted distribution', but there is no 2:5:3 in the code at all. The current implementation is: start is measured with the full maxWidth and has no cap; end goes through maxIntrinsicWidth and is hard-capped at 6/10 of the remaining width; center takes what's left. Don't compute layout results from 2:5:3."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:217
+    - text: "The endActions slot is measured with maxIntrinsicWidth. Putting a component that doesn't support intrinsic measurement (LazyRow/LazyColumn and the like) into it throws outright. The end slot should only hold things with a computable intrinsic width, like switches, arrows, and short text."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:216
+    - text: "startAction has no width cap at all (measured with the full maxWidth). The design assumes it's an icon or a small avatar; putting a long Text into it eats the whole row, squeezing center to 0 width and stacking the text vertically one character at a time."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:211
+    - text: "heightIn(min = 56.dp) and fillMaxWidth() are both placed after modifier and are forced: a list item always fills the width and is at least 56.dp tall, and can't be made into a wrap-content inline element."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:161
+    - text: "The custom Layout guards height against Constraints.Infinity but not width (layout(width = maxWidth, ...) uses maxWidth directly). Putting BasicComponent in a horizontally scrollable parent (horizontalScroll / LazyRow) yields an infinite-width constraint. This path has no guard."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:236
+    - text: "The convenience overload's title/summary take only the fontSize from textStyles (title additionally hardcodes FontWeight.Medium), not the whole TextStyle —— properties like lineHeight in headline1/body2 won't take effect. For full typography control switch to the overload with a content slot."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:92
+    - text: "The KDoc explicitly requires interactionSource to stay 'always null' or 'always non-null' over the component's lifecycle; switching midway reallocates the internal source and drops unfinished interactions."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:55
+    - text: "When both start and end are null it takes a fast path (a plain Column), bypassing the custom Layout and intrinsic measurement entirely. Only when the two side slots are actually needed do you pay the cost of intrinsic measurement."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:167
+  visual:
+    min_height: 56.dp (heightIn, forced)
+    inside_margin: PaddingValues(16.dp)
+    column_gap: 8.dp (hardcoded, not configurable)
+    end_cap: the end slot takes at most 60% of 'the width remaining after deducting start and the gaps', and shrinks by intrinsic (if the content isn't wide it doesn't take the space)
+    bottom_gap: 8.dp between bottomAction and the main row
+  state: "Purely stateless. onClick is nullable; when null or enabled=false no clickable is installed. clickableModifier is cached with remember, keyed on the boolean onClick != null rather than the lambda itself (the lambda is held by rememberUpdatedState), so a freshly created lambda each frame doesn't rebuild the Modifier chain. holdDownState goes through HoldDownObserver. The three columns are each vertically centered, and end sticks to the right via placeRelative (auto-mirrored in RTL)."
+  m3: "Corresponds to material3.ListItem. Differences: Miuix uses a custom Layout + intrinsic measurement for the three-column distribution (AGENTS.md explicitly forbids changing it to Row + weight(1f); a past change caused text to stack vertically one character at a time when start/end overflowed); no ListItemColors multi-slot coloring, only titleColor/summaryColor; none of the leadingContent/trailingContent/overlineContent/supportingContent naming."

@@ -1,0 +1,553 @@
+# Preference components
+#
+# Shared premises for the whole module (not repeated on each component entry):
+#   1. This is not the counterpart of androidx.preference. The whole module has zero persistence, with no
+#      key/defaultValue/DataStore concept; every component is purely controlled: value in, callback out.
+#   2. There is no group container and no code that rounds a group's first/last item together. Grouping is
+#      assembled by the caller with SmallTitle + Card; the Card's squircle mask clips the overflow uniformly.
+#   3. Overlay* must be used inside a Scaffold; Window* need not be.
+
+ArrowPreference:
+  summary: "A navigation-style settings row with a fixed arrow on the right, used to drill into a sub-page or open a self-managed dialog; it only handles appearance and clicks, and holds no value."
+  gotchas:
+    - text: "The arrow color is in fact not customizable. `ArrowPreferenceDefaults.endActionColors()` is public and looks like a configuration entry point, but ArrowPreference's parameter list has no argument that accepts EndActionColors; the factory is only called internally by the private ArrowPreferenceEndAction. Both fields of EndActionColors are private val and their accessor functions are internal, so even with an instance you cannot read them. To change the arrow color you must draw your own inside endActions."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/ArrowPreference.kt:95
+    - text: "The default value of endActions is `{}` rather than null, so the wrapping Row with padding(end = 8.dp) always exists. Even if you pass no endActions at all, there is always an 8dp gap between the title and the arrow -- unlike CheckboxPreference/SliderPreference (default null, no Row when not passed)."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/ArrowPreference.kt:71
+    - text: "It does not pass a role to BasicComponent. The Switch/Checkbox/RadioButton/Dropdown in the same group all pass an explicit semantic role; only ArrowPreference and the two Sliders do not, so screen readers will not announce this row as a button. The Preference layer also does not expose onClickLabel."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/ArrowPreference.kt:63
+    - text: "Omitting onClick makes the whole row non-clickable: BasicComponent only attaches Modifier.clickable when `enabled && onClick != null`. The arrow is still drawn, but it neither consumes gestures nor gives any press feedback -- it looks tappable but does nothing."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Component.kt:146
+  visual:
+    arrow: "A 10×16.dp Image (MiuixIcons.Basic.ArrowRight), fixed size and not adjustable; RTL uses graphicsLayer scaleX = -1f to mirror it, not a different icon"
+    row: "Minimum height 56.dp, default padding 16.dp on all four sides (BasicComponentDefaults.InsideMargin)"
+    text: "Title uses headline1 size + FontWeight.Medium, summary uses body2; neither passes maxLines/overflow, so long text always wraps, never ellipsizes, and the line height grows"
+    gap: "A fixed 8.dp between endActions and the arrow"
+  state: "Pure forwarding, zero state of its own. onClick is the only interaction entry. holdDownState is an \"externally injected press state\": when the caller opens its own Dialog it sets it true, keeping this row highlighted as pressed until it is manually set back to false in the Dialog's onDismissFinished -- it needs a remember/rememberSaveable MutableState held by the caller."
+  m3: "No one-to-one counterpart. The closest is material3's ListItem with a chevron in trailingContent, or androidx.preference's Preference(fragment=...). Differences: M3 ListItem has no external press-state injection like holdDownState, and no fixed startAction/endActions/bottomAction three-slot layout; conversely ArrowPreference has none of M3's overlineContent/supportingContent multi-line structure."
+
+SwitchPreference:
+  summary: "A settings row with a switch; the whole row is clickable to toggle. Used for boolean settings. Purely controlled: checked in, onCheckedChange out."
+  gotchas:
+    - text: "The parameter order is the reverse of CheckboxPreference: SwitchPreference is (checked, onCheckedChange, title, ...), CheckboxPreference is (title, checked, onCheckedChange, ...). Copy-pasting positional arguments between the two fails to compile (String passed to Boolean). Always use named arguments."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SwitchPreference.kt:46
+    - text: "onCheckedChange is a non-null `(Boolean) -> Unit`, inconsistent with the nullable types of CheckboxPreference/RadioButtonPreference in the same group. The underlying Switch supports passing a null callback for read-only semantics (no toggleable attached), but the Preference layer does not forward null, so you cannot make a read-only switch here -- you can only use enabled = false."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SwitchPreference.kt:47
+    - text: "Haptic feedback fires only when you tap the switch itself. Once the Switch receives a non-null callback it attaches toggleable and emits ToggleOn/ToggleOff haptics; tapping other areas of the row goes through BasicComponent.onClick with no haptics at all. On the same settings page, Switch/Checkbox have control-level haptics while RadioButtonPreference has row-level haptics, so the three feel inconsistent."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Switch.kt:119
+    - text: "There are two toggleable nodes in the accessibility tree: the outer row clickable(role = Role.Switch) and the inner Switch toggleable(role = Role.Switch). A screen reader may read it twice."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SwitchPreference.kt:90
+    - text: "In the Chinese doc switchpreference.md the \"Type\" column of the property table was written as `Yes` (the value from the English Required column shifted over), so following it you would not know the callback signature. The actual type is `(Boolean) -> Unit`, and it is required."
+      severity: medium
+      evidence: docs/zh_CN/components/switchpreference.md:63
+  visual:
+    row: "Minimum height 56.dp, default padding 16.dp; the switch body's size is decided by miuix-ui's Switch, the Preference layer only forwards switchColors"
+    gap: "A fixed 8.dp between endActions and the switch (endActions defaults to `{}`, so that wrapping Row always exists)"
+  state: "Purely controlled. The caller keeps its own `var checked by remember { mutableStateOf(false) }` and, inside onCheckedChange, both updates the state and persists it. The component does not remember, restore, or know about a settings key."
+  m3: "Corresponds to material3's ListItem + Switch combination, or androidx.preference's SwitchPreferenceCompat. The fundamental difference from the latter is zero persistence: no key, no defaultValue, no automatic write to SharedPreferences. The difference from M3 Switch is that there is no thumbContent slot here, and the whole-row click and the control click are two different gesture paths (different haptics)."
+
+CheckboxPreference:
+  summary: "A settings row with a checkbox that can sit at the row's start or end; used for multi-select lists or boolean items. Purely controlled."
+  gotchas:
+    - text: "onCheckedChange is nullable but **has no default value**, so it must be passed explicitly (you can pass null). The doc checkboxpreference.md writes No in the Required column; omitting the parameter as it suggests fails to compile directly. Nullable ≠ omittable."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/CheckboxPreference.kt:52
+    - text: "The parameter order is (title, checked, onCheckedChange), the reverse of SwitchPreference's (checked, onCheckedChange, title). Positional arguments cannot be swapped between the two."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/CheckboxPreference.kt:50
+    - text: "Passing onCheckedChange = null does not turn the row into a static display. The onClick handed to BasicComponent is always a non-null lambda, so the row still attaches clickable and still shows press highlight; it just does nothing when tapped (the checkbox body does correctly become non-clickable). To be truly non-interactive you must pass enabled = false."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/CheckboxPreference.kt:123
+    - text: "Tri-state checkbox (Indeterminate) is unreachable at this layer. Internally it always constructs `ToggleableState(checked)` from a Boolean; the underlying Checkbox supports Indeterminate but Preference has no entry point. For tri-state you must assemble your own BasicComponent with miuix-ui's Checkbox."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/CheckboxPreference.kt:151
+    - text: "Haptics fire only when the checkbox body itself is tapped (Checkbox's internal triStateToggleable provides them); tapping other areas of the row has no haptics."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Checkbox.kt:146
+  visual:
+    spacing: "The checkbox has its own padding(end = 5.dp); the user's startAction adds another 5.dp via StartActionSlot; BasicComponent adds a further 8.dp between the start slot and the body. So \"checkbox → icon\" is 5.dp and \"icon → title\" is 5+8=13.dp"
+    empty_slot: "When checkboxLocation = End and no startAction is passed, the start slot is passed null as a whole, BasicComponent takes the no-start branch, and that 8.dp is not produced either (it is not a blank placeholder)"
+    row: "Minimum height 56.dp, default padding 16.dp"
+  state: "Purely controlled. checked is held by the caller; internally the component only uses rememberUpdatedState to stabilize the callback, with no self-held state. CheckboxLocation is an ordinary enum parameter, not state."
+  m3: "Corresponds to material3 ListItem + Checkbox, or androidx.preference's CheckBoxPreference. Differences: M3's TriStateCheckbox tri-state capability is cut at this layer; androidx's automatic persistence and dependency linkage do not exist here; conversely this adds checkboxLocation (start/end), something M3 ListItem needs a manual slot swap to achieve."
+
+RadioButtonPreference:
+  summary: "A settings row with a radio button; the whole row is clickable. Used for a set of mutually exclusive options. When selected, the title and summary change color -- it is the only component in this group with a selected-state text feedback."
+  gotchas:
+    - text: "There is no titleColor / summaryColor parameter; instead they are merged into a single `colors: RadioButtonPreferenceColors`. Copying `titleColor = ...` over from SwitchPreference / CheckboxPreference fails to compile (No parameter with name titleColor). To change colors you must go through RadioButtonPreferenceDefaults.radioButtonPreferenceColors(...)."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/RadioButtonPreference.kt:58
+    - text: "onClick is nullable but **has no default value** and must be passed explicitly. Passing null causes the same problem as CheckboxPreference: the row is still clickable, still shows press highlight, and just does nothing when tapped."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/RadioButtonPreference.kt:55
+    - text: "When selected, the title and summary default to the theme primary color. If your intuition from other Preferences assumes text color is constant, the selected item in a radio group will suddenly change color -- this is intentional design, but it is the only component in this group that does so. If you do not want it, explicitly set selectedTitleColor/selectedSummaryColor back to the normal color."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/RadioButtonPreference.kt:149
+    - text: "The RadioButton body is explicitly passed onClick = null, so it is not clickable and emits no haptics on its own; the whole-row click is the only interaction path, and the haptic fires at row level. The haptic type also depends on the selected state **before** the click: tapping an already-selected item again emits ToggleOff rather than ToggleOn."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/RadioButtonPreference.kt:86
+    - text: "All four fields of RadioButtonPreferenceColors are private val with only internal accessor methods. The doc listing them as readable properties is wrong; once you have an instance you cannot read any color."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/RadioButtonPreference.kt:163
+  visual:
+    spacing: "The radio button has its own padding(end = 5.dp); startAction adds another 5.dp via StartActionSlot; BasicComponent adds a further 8.dp. Structurally identical to CheckboxPreference"
+    selected_color: "Selected-state title/summary default to MiuixTheme.colorScheme.primary"
+    row: "Minimum height 56.dp, default padding 16.dp"
+  state: "Purely controlled. selected and the mutual-exclusion logic are entirely on the caller: typically `var selectedIndex by remember { mutableIntStateOf(0) }`, with each row passing `selected = index == selectedIndex` and `onClick = { selectedIndex = index }`. The components do not know about each other, and there is no RadioGroup-style container."
+  m3: "Corresponds to material3 ListItem + RadioButton (with Modifier.selectableGroup()), or the expanded form of androidx.preference's ListPreference. Differences: there is no selectableGroup semantic container here, so a radio group is not recognized as one group in the accessibility tree; conversely M3 has no built-in \"text turns theme color when selected\"."
+
+SliderPreference:
+  summary: "A settings row with a slider below the title, optionally showing the current value text on the right; used for continuous adjustments like volume, brightness, or font size. The slider renders in BasicComponent's bottomAction area, not inline in the row."
+  gotchas:
+    - text: "The bottomAction you pass is not the \"bottom-most\" content but is redefined as content \"above the slider\" -- internally the component wraps bottomAction into `Column { your bottomAction; Slider }`. There is no slot to place something below the slider."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:147
+    - text: "\"Clickable\" and \"shows an arrow\" are bound together: `showArrow = onClick != null`. Passing onClick necessarily produces the right arrow; you cannot have a clickable slider row without an arrow, nor conversely show only an arrow without responding to clicks."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:112
+    - text: "The KDoc for showKeyPoints says \"Only works when keyPoints is not null\", but the actual semantics are exactly the opposite: computeKeyPointFractions branches so that if keyPoints is non-null it draws the custom points (ignoring showKeyPoints), and showKeyPoints only decides whether to draw the points at step positions when keyPoints == null. Writing `keyPoints = listOf(...)` + `showKeyPoints = false` per the doc expecting no points to be drawn will still draw them."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:1329
+    - text: "The real condition under which magnetThreshold takes effect is stronger than the doc: resolveValueFromFraction returns straight into the quantization branch when steps > 0, so the magnet code never runs. Magnet only makes sense when steps == 0 and keyPoints != null. The doc only says \"Only applies when keyPoints is set\"."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:1264
+    - text: "An illegal valueRange or a negative steps throws IllegalArgumentException directly, not the \"will be coerced\" the doc implies. The underlying Slider has require(steps >= 0) and require(valueRange.start < valueRange.endInclusive), so an empty or reversed range crashes on the spot. Only value itself is coerced."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:104
+    - text: "The valueText's size and color are hard-coded in the component (body2 + onSurfaceVariantActions / disabled color), do not go through any colors parameter, and are not affected by summaryColor. To customize it you can only switch to drawing your own via endActions."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:132
+    - text: "The doc's \"With Start Icon\" example uses `MiuixIcons.Basic.Audio`, which does not exist -- the Basic icon set has only seven: ArrowRight / ArrowUpDown / Check / Close / Search / SearchCleanup / Sidebar. Copying it fails to compile (unresolved reference)."
+      severity: high
+      evidence: docs/components/sliderpreference.md:114
+    - text: "The doc's property table places title before modifier, while the source order is (value, onValueChange, modifier, title, ...). Writing positional arguments in the table's order causes type mismatches."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:84
+    - text: "It does not pass a role, so a screen reader will not announce this row as an adjustable control (the slider body carries its own semantics, but the outer row does not)."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:115
+  visual:
+    title: "title is String? -- the only Preference in this group that allows no title; passing null produces no Text at all (not a blank placeholder row)"
+    arrow: "10×16.dp, a line-by-line copy of ArrowPreference's arrow (same RTL scaleX mirroring, same reuse of ArrowPreferenceDefaults.endActionColors())"
+    gap: "A fixed 8.dp between the title area and the slider (a Spacer BasicComponent inserts before bottomAction), not adjustable"
+    row: "Minimum height 56.dp, but the slider and text stretch it taller; default padding 16.dp"
+  state: "Purely controlled. value and onValueChange are held by the caller; onValueChangeFinished is only for knowing that dragging ended -- do not write the value back inside it. Of the 25 parameters, the vast majority flatten the underlying Slider's tuning surface as-is; the Preference layer does no processing."
+  m3: "Corresponds to material3's ListItem + Slider combination; androidx.preference's SeekBarPreference is the closest. Differences: SeekBarPreference auto-persists an integer value and has XML attributes for min/max/increment, none of which exist here; conversely this adds keyPoints (custom key points), magnetThreshold (magnet), hapticEffect, and reverseDirection, capabilities M3 Slider lacks."
+
+RangeSliderPreference:
+  summary: "The two-thumb version of SliderPreference; value is a ClosedFloatingPointRange, used for price ranges, frequency bands, upper/lower thresholds, and similar dual-end selections."
+  gotchas:
+    - text: "It has one fewer parameter than SliderPreference: no reverseDirection (24 parameters vs 25). Copying call code from SliderPreference that includes reverseDirection = ... fails to compile."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:212
+    - text: "Same as SliderPreference: the doc semantics of showKeyPoints are reversed. When keyPoints is non-null, points are drawn regardless of whether showKeyPoints is true or false; showKeyPoints only decides whether to draw the step points when keyPoints == null."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:1329
+    - text: "The underlying RangeSlider likewise has require(steps >= 0) and require(valueRange.start < valueRange.endInclusive), so an illegal range throws rather than being silently corrected."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Slider.kt:513
+    - text: "bottomAction is likewise redefined as content \"above the slider\"; onClick is likewise bound to the right arrow; valueText color is likewise hard-coded. All three are line-for-line the same as SliderPreference."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/SliderPreference.kt:275
+    - text: "The doc's \"With Start Icon\" example likewise uses the non-existent `MiuixIcons.Basic.Audio`; copying it fails to compile."
+      severity: high
+      evidence: docs/components/rangesliderpreference.md:113
+  visual:
+    title: "title is String?, omittable"
+    arrow: "10×16.dp, sharing the same private implementation as SliderPreference"
+    gap: "A fixed 8.dp between the title area and the slider"
+  state: "Purely controlled. value is a ClosedFloatingPointRange<Float>, remembered by the caller; onValueChange returns the new range every frame. There is no role, so the screen-reader semantics come only from the underlying RangeSlider."
+  m3: "material3 has a RangeSlider but no corresponding Preference wrapper; androidx.preference has no range-type Preference at all. This is a Miuix-specific addition."
+
+OverlayDropdownPreference:
+  summary: "A settings row that shows the current selected value on the right and, when clicked, pops up a dropdown menu in a Scaffold overlay. Suited for cases with few options that need to follow the Scaffold's blur/scale effects."
+  gotchas:
+    - text: "It must be wrapped in a Scaffold. Without one, LocalPopupStates degrades to a default list that no host renders, and the overlay **silently fails to appear** -- no error, no crash, no log, just nothing happening on tap. Several doc examples (such as the Disabled State in overlaydropdownpreference.md) themselves fail to wrap it in a Scaffold."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:595
+    - text: "Only the `items: List<String>` overload has onSelectedIndexChange. The entry / entries overloads **have no such parameter at all**: the selection callback must be written into each DropdownItem.onClick, and the selected state must be computed and passed in yourself as `selected = ...`. Calling the entries overload the way the items overload is written fails to compile."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:217
+    - text: "When items is empty the component automatically becomes disabled: `actualEnabled = enabled && itemsNotEmpty`. Even if you pass enabled = true, an empty list grays out this row, makes it non-clickable, and the popup never enters composition. When data loads asynchronously this is the expected \"auto-gray while loading\" behavior, but it is not in the doc."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:146
+    - text: "The default value of collapseOnSelection varies by overload: the items overload hard-codes true and does not expose the parameter; the entry overload defaults to true; the entries overload defaults to `entries.size <= 1` -- meaning with multiple groups it **does not collapse after selecting**."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:232
+    - text: "The entries overload's default collapseOnSelection uses the **unfiltered** entries.size, while rendering uses nonEmptyEntries after empty groups are filtered out. Passing an empty DropdownEntry (making size 2) silently flips the default from true to false, while the screen still shows only one group."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:250
+    - text: "The selected-value Text shown by the entries overload has no weight/align, while the single-group entry overload has `weight(1f, fill = false)` + align(CenterVertically). BasicComponent clamps the end area's width to 60% of the remaining width, and under that constraint weightless long text fills the Row and pushes the following 10dp arrow past the boundary. In the multi-group case a long selected value risks clipping the arrow."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:291
+    - text: "The multi-group overload joins the text of the selected item in every group with newlines into one block, rather than showing only one value. Moreover this concatenation is written inside the endActions lambda without remember, re-traversing all groups on every recomposition."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:282
+    - text: "The expanded state is self-held and **one-way out only**: there is only onExpandedChange to observe, no expanded input parameter, so the outside cannot programmatically expand or collapse the menu. The entire Dropdown/Spinner/Menu family is like this (isHoldDown too); none of them provides a controlled expanded."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:132
+    - text: "The items overload's `remember(items, selectedIndex, onSelectedIndexChange)` treats the callback lambda as a key. Call sites almost always write an inline lambda, whose identity changes on every recomposition, so the cache is invalidated every frame and the whole DropdownItem list is rebuilt every frame. To avoid it, remember a stable callback reference outside yourself."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:77
+    - text: "The press highlight is not released as soon as you let go: isHoldDown is reset by the overlay's onDismissFinished, i.e. this row does not return to normal until the menu's exit animation finishes. This is the intentional MIUI feel, but if you have wrapped your own animation listener you may feel the state is stuck."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlayDropdownPreference.kt:200
+    - text: "All four doc pages (overlaydropdownpreference / overlayspinnerpreference / windowdropdownpreference / windowspinnerpreference) write the default-value column of onSelectedIndexChange as `-` (meaning no default), while the source is actually `= null` and can be omitted. The Required column on the same row says No, contradicting itself."
+      severity: medium
+      evidence: docs/components/overlaydropdownpreference.md:218
+  visual:
+    end_arrow: "DropdownArrowEndAction, a 10×16.dp bidirectional up-down arrow (MiuixIcons.Basic.ArrowUpDown), not ArrowRight"
+    value_text: "body2 size, color onSurfaceVariantActions; when disabled/empty-list it is uniformly changed to disabledOnSecondaryVariant (arrow the same color)"
+    popup_align: "The overlay is fixed to right alignment (PopupPositionProvider.Align.End), not changeable"
+    popup_width: "Clamped by ListPopupColumn between 200.dp–288.dp, and only the **first 8 items'** intrinsic widths participate in measurement -- from the 9th item on, no matter how long, they do not contribute to the width and may be truncated"
+    popup_row: "In popup mode each row has 20.dp left/right; the top of the first row and the bottom of the last row of the whole overlay are 20.dp, the rest 12.dp; a single line's inner text is limited to 216.dp width. This is the library's only \"first/last item special-casing\", and it changes padding, not corner radius"
+    divider: "A 1.5.dp divider between groups, 20.dp left/right and 4.dp top/bottom; empty groups are filtered out beforehand, so dividers never appear on either side of an empty group"
+    row: "Minimum height 56.dp, default padding 16.dp"
+  state: "Value is controlled + expanded state is self-held. selectedIndex / DropdownItem.selected are given by the caller; isDropdownExpanded and isHoldDown are remembered internally (not rememberSaveable, so the menu collapses after a config change). Disabling has three layers ANDed together: row-level enabled → DropdownEntry.enabled (grays out the whole group but the menu still pops) → DropdownItem.enabled; in overlay rows the disabled color has the highest priority, overriding the selected state."
+  m3: "Corresponds to material3's ExposedDropdownMenuBox + ExposedDropdownMenu, or androidx.preference's ListPreference. Differences: M3's expanded is controlled state held by the caller, whereas here it is self-held by the component and cannot be driven externally; M3's menu anchors on the text field with width following the anchor, while here it is fixed right-aligned with width clamped to 200–288dp; androidx's ListPreference has built-in entries/entryValues and persistence, none of which exist here."
+
+WindowDropdownPreference:
+  summary: "Structurally identical to OverlayDropdownPreference, differing only in that the overlay uses a platform window rather than a Scaffold overlay slot; it does not depend on a Scaffold, and the menu can extend beyond the host window's bounds."
+  gotchas:
+    - text: "It has no renderInRootScaffold parameter (the Overlay version does). The entire Window* family does not accept this parameter, so copying call code from the Overlay version with it included fails to compile. Conversely this also means the Window version can be used without a Scaffold."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:109
+    - text: "The entry / entries overloads likewise have no onSelectedIndexChange; only the items: List<String> overload does."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:211
+    - text: "An empty items / all-empty groups likewise auto-resolve to disabled: `actualEnabled = enabled && itemsNotEmpty` (the entries version is `enabled && hasEntries`); passing emptyList() shows a disabled state even with enabled = true, and the popup is not created."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:141
+    - text: "The showValue behavior of the two overloads differs: the entry version takes the text of the first selected item and carries weight/align; the entries version joins the selected items' text of all groups with newlines, and that Text has no weight and no align, so it easily competes with the arrow for space."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:283
+    - text: "collapseOnSelection defaults: entry overload true, entries overload `entries.size <= 1`; the items overload does not expose the parameter (hard-codes true internally)."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:225
+    - text: "The expanded state is likewise self-held and one-way out only (only onExpandedChange, no expanded input parameter)."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowDropdownPreference.kt:136
+  visual:
+    same_as_overlay: "The visual spec is exactly the same as OverlayDropdownPreference: 10×16.dp up-down arrow, right-aligned overlay, width 200–288.dp, first/last rows 20.dp and the rest 12.dp, divider 1.5.dp"
+    difference: "The only difference is the overlay is hosted on the platform window layer, can extend beyond the host Scaffold/window bounds, and is not subject to the Scaffold's blur/scale processing"
+  state: "Same as the Overlay version: value controlled, expanded state self-held. The collapse path takes one extra hop: it goes through LocalDismissState rather than calling onDismiss directly; that CompositionLocal defaults to null, so in theory if it cannot be obtained it silently fails to collapse."
+  m3: "Same as OverlayDropdownPreference. Relative to M3's DropdownMenu (itself a platform Popup), the Window version behaves closer in positioning and crossing bounds, but expanded is still not externally controllable."
+
+OverlaySpinnerPreference:
+  summary: "A heavier selection row than OverlayDropdownPreference: options are DropdownItem (supporting per-item icon, summary, and individual disabling), and it can be presented as either a popup menu or a dialog."
+  gotchas:
+    - text: "popup mode and dialog mode are not a boolean toggle but are **selected by whether or not dialogButtonString is passed**, choosing the overload. It is required, has no default, and its position varies by overload: it is the 4th parameter in the items version and the 3rd in the entry / entries versions. Without it you land on the popup overload, with it you land on the dialog overload -- there are 6 functions of the same name in all, and it is very easy to pick the wrong one in IDE completion."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:288
+    - text: "The three dialog-mode overloads **have no maxHeight parameter**, so the dialog height cannot be limited (the list relies on an internal Layout measuring the button first and then giving the remaining height to the LazyColumn). Only popup mode has maxHeight."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:288
+    - text: "The default colors of the two modes differ: popup uses DropdownDefaults.dropdownColors() (selected background surfaceContainer), dialog uses dialogDropdownColors() (selected background tertiaryContainer, transparent container). The same data in a different mode gives the selected item a different background color."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:298
+    - text: "popup mode's expanded state uses rememberSaveable, while dialog mode and all other Dropdown/Menu components use ordinary remember. Consequence: after an Android config change or process restore, the popup-mode Spinner will **re-pop its menu by itself**; meanwhile the isHoldDown restored at the same moment is false (ordinary remember), so the press highlight and the expanded state do not match."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:174
+    - text: "The element type of items is DropdownItem, not List<String> (DropdownPreference is String). Internally it converts with item.copy(selected = ..., onClick = { onSelectedIndexChange(index); item.onClick?.invoke() }), which **keeps and chains** the onClick you originally wrote on the item -- both callbacks execute."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:82
+    - text: "The KDoc says `@param spinnerColors The [SpinnerColors] ...`, but SpinnerColors is already @Deprecated (a typealias of DropdownColors), and you should actually pass DropdownColors. Worse is another typealias: `SpinnerEntry = DropdownItem` (a single item), not DropdownEntry (a group). Literally translating SpinnerEntry → DropdownEntry by name from the old Spinner API is guaranteed to be wrong."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:536
+    - text: "Same as OverlayDropdownPreference: it must be wrapped in a Scaffold; the entry/entries overloads have no onSelectedIndexChange; empty entries auto-resolve to disabled; the expanded state is self-held and cannot be driven externally."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/OverlaySpinnerPreference.kt:190
+    - text: "The example in windowspinnerpreference.md writes `private class RoundedRectanglePainter(...)` as a local class inside the composable body -- Kotlin local classes cannot have the private modifier, so copying it fails to compile. The sister page overlayspinnerpreference.md and the demo both omit private."
+      severity: high
+      evidence: docs/components/windowspinnerpreference.md:55
+  visual:
+    dialog_layout: "Inside the dialog it first measures the bottom confirm button and then gives the remaining height to the LazyColumn, so the button is never pushed off-screen by a long list; the list is flush left/right with 24.dp top/bottom; the button has 24.dp left/right, 12.dp top, and a minimum height of 50.dp"
+    dialog_row: "dialog-mode rows are 28.dp left/right, minimum height 56.dp, minimum width 200.dp and fillMaxWidth; all rows are uniformly 12.dp top/bottom (**deliberately no first/last special-casing**, because the list is scrollable); a single line's inner text is not width-limited"
+    popup_row: "popup-mode rows are 20.dp left/right; first-row top / last-row bottom 20.dp, the rest 12.dp; a single line's inner text is limited to 216.dp width"
+    item_slots: "Each item may have a leading icon (minimum 26.dp square + 12.dp trailing), primary text body1 Medium, and summary body2; the selected checkmark is 20.dp, and when not selected the checkmark is a transparent placeholder so the row width does not change"
+    value_text: "The selected value on the right of the row is body2, with weight(1f, fill = false) and TextOverflow.Ellipsis"
+  state: "Value controlled + expanded state self-held. popup mode's expanded state is restored across config changes (rememberSaveable), dialog mode's is not -- if you rely on \"the menu should close after rotating the screen\", popup mode breaks that expectation."
+  m3: "Corresponds to a combination of androidx.preference's ListPreference (dialog form) and material3's ExposedDropdownMenu (popup form). M3 has no design of \"the same component switching between overlay and dialog via one required string parameter\"; androidx's ListPreference has built-in entryValues and persistence, none of which exist here."
+
+WindowSpinnerPreference:
+  summary: "The platform-window version of OverlaySpinnerPreference: likewise dual popup/dialog modes and DropdownItem options, but it does not depend on a Scaffold."
+  gotchas:
+    - text: "It has no renderInRootScaffold parameter (every overload of the Overlay version does). Copying a call from the Overlay version fails to compile."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowSpinnerPreference.kt:146
+    - text: "It likewise switches between the popup / dialog overloads by whether dialogButtonString is present; dialog mode likewise has no maxHeight."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowSpinnerPreference.kt:273
+    - text: "popup mode's expanded state uses rememberSaveable while dialog mode uses ordinary remember, the same inconsistency as the Overlay version: after a config change, popup re-pops by itself."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowSpinnerPreference.kt:164
+    - text: "Empty entries auto-resolve to disabled (actualEnabled = enabled && hasEntries), and the overlay does not participate in composition at all."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/preference/WindowSpinnerPreference.kt:178
+    - text: "If you build options using DropdownItem's compatibility secondary constructor `DropdownItem(icon, title, summary)` and pass null for title, text becomes an empty string; the row's showValue on the right silently shows nothing because of the `text.isNullOrEmpty()` check. None of the 7 doc pages document this secondary constructor."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:351
+    - text: "The doc example's `private class RoundedRectanglePainter(...)` is a local class inside the composable body; Kotlin does not allow private local classes, so copying it fails to compile."
+      severity: high
+      evidence: docs/components/windowspinnerpreference.md:55
+  visual:
+    same_as_overlay: "Row and overlay specs are the same as OverlaySpinnerPreference: popup rows 20.dp left/right / first-last 20.dp / rest 12.dp / inner text limited to 216.dp; dialog rows 28.dp left/right, uniformly 12.dp, not width-limited; divider 1.5.dp"
+    difference: "The overlay is hosted on the platform window layer, can extend beyond the host bounds, and is not affected by the Scaffold"
+  state: "Same as the Overlay version. Collapse goes through LocalDismissState (default null) rather than calling onDismiss directly."
+  m3: "Same as OverlaySpinnerPreference. Relative to M3, the Window version is closer to material3 DropdownMenu's platform Popup behavior on \"can the menu extend beyond the parent container\"."
+
+OverlayDropdownMenu:
+  summary: "An action menu that uses a whole row (BasicComponent) as its trigger: only an arrow on the right, no selected value shown. Functionally it fully overlaps with OverlayDropdownPreference(showValue = false); which to pick is just a semantic preference."
+  gotchas:
+    - text: "It has only the entry / entries overloads, **no convenient items: List<String> version**, and no selectedIndex / onSelectedIndexChange / showValue. Each item's behavior must be written into DropdownItem.onClick, and you compute the selected state yourself. Calling it the way you use DropdownPreference fails to compile."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayDropdownMenu.kt:73
+    - text: "It must be wrapped in a Scaffold, otherwise the overlay silently fails to appear."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:595
+    - text: "When all groups are empty the whole row is automatically disabled (actualEnabled = enabled && hasEntries) and the overlay does not enter composition. Empty groups are filtered out first, so dividers never appear on either side of an empty group."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayDropdownMenu.kt:105
+    - text: "collapseOnSelection: the entry overload defaults to true, the entries overload defaults to `entries.size <= 1`. When used as a multi-group action menu the default is \"do not collapse after selecting\", convenient for consecutive operations but easily mistaken for a bug."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayDropdownMenu.kt:87
+    - text: "The expanded state is self-held and one-way out only: there is only onExpandedChange, no expanded input parameter, so you cannot open the menu programmatically."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayDropdownMenu.kt:91
+  visual:
+    end: "On the right there is only DropdownArrowEndAction (a 10×16.dp up-down arrow), no value text"
+    popup: "Width 200–288.dp, only the first 8 items are measured for width; rows 20.dp left/right, first/last rows 20.dp and the rest 12.dp, inner text limited to 216.dp width; right-aligned"
+    row: "Minimum height 56.dp, default padding 16.dp"
+  state: "No value state. The expanded state and press state are held by internal remember (not Saveable); the press highlight persists until the overlay's exit animation finishes. DropdownEntry.enabled can gray out a whole group but the menu still pops."
+  m3: "Corresponds to material3's DropdownMenu attached to a ListItem. Differences: M3's expanded is fully controlled (`DropdownMenu(expanded, onDismissRequest)`), here it is uncontrollable; M3's DropdownMenuItem is an arbitrary composable slot, here it is the DropdownItem data class (fixed text/icon/summary/children structure)."
+
+OverlayIconDropdownMenu:
+  summary: "An action menu that uses an IconButton as its trigger (typical use: a top-bar \"more\" button). It does not go through BasicComponent and has no title/summary row."
+  gotchas:
+    - text: "It has no Preference slots such as title / summary / startAction / endActions -- it renders `Box { IconButton; Popup }`. What the trigger looks like is entirely decided by the final required content trailing lambda."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconDropdownMenu.kt:108
+    - text: "It has only the entry / entries overloads, no convenient items version; each item's behavior is written on DropdownItem.onClick."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconDropdownMenu.kt:65
+    - text: "When entries is all empty the IconButton goes straight into a disabled state (enabled = actualEnabled); the button grays out rather than \"tapping produces no menu\"."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconDropdownMenu.kt:95
+    - text: "It must be wrapped in a Scaffold, otherwise the overlay silently fails to appear (the doc page has a danger callout stating this). Note also that it belongs to the optional artifact miuix-preference, while the OverlayListPopup that it transitively calls via OverlayDropdownPopup is in miuix-ui -- a project depending only on miuix-ui cannot use this component, and neither the doc frontmatter nor the body states the artifact ownership."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:595
+    - text: "The doc example's Import section lists only the component itself, yet the example uses extension icons like MiuixIcons.Edit / Sort / SelectAll -- these are in the separate artifact miuix-icons, and miuix-ui does not carry a transitive dependency, so copying it gives an unresolved reference."
+      severity: medium
+      evidence: docs/components/overlayicondropdownmenu.md:27
+  visual:
+    button: "IconButton defaults to minimum 40×40.dp, corner radius 40.dp; the four parameters (backgroundColor / cornerRadius / minHeight / minWidth) are forwarded as-is to IconButtonDefaults"
+    popup: "Width 200–288.dp, only the first 8 items measured for width; rows 20.dp left/right, first/last 20.dp and the rest 12.dp, inner text limited to 216.dp width; right-aligned"
+  state: "No value state. The expanded state and press state use internal remember; the press highlight is passed in via the IconButton's holdDownState and is not reset until the overlay's exit animation finishes."
+  m3: "Corresponds to material3's IconButton + DropdownMenu combination. Differences: M3 requires you to hold `var expanded by remember` yourself, here the component self-holds it and it cannot be driven externally; M3's menu items are arbitrary composables, here they are the DropdownItem data structure."
+
+OverlayIconCascadingDropdownMenu:
+  summary: "An IconButton-triggered two-level cascading menu: items whose DropdownItem.children is non-null become submenu triggers. Used for two-level actions like \"more → sort by → by name/by time\"."
+  gotchas:
+    - text: "The depth is hard-limited to 2. Deeper children are ignored, and **not entirely silently** -- it will println one line `[CascadingListPopup] Cascading depth is limited to 2; deeper children are ignored.`, with a file-level boolean guaranteeing it prints only once per process. The \"silently ignored\" the doc consistently states is inaccurate."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingMorphContent.kt:117
+    - text: "If a first-level item has children, its own onClick is ignored (clicking = expanding the submenu); but second-level items are always treated as leaves and their onClick is called. So the rule \"non-null children means onClick is ignored\" only holds at the first level."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:325
+    - text: "During the time the menu is expanded, the **order** of entry / item must stay stable: the cascade layer tracks the expanded item by positional index, not by object reference. Reordering the list while expanded misaligns the submenu. State such as an item's selected can change, but the order cannot."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconCascadingDropdownMenu.kt:28
+    - text: "Both collapseOnSelection overloads default to true, unlike other entries overloads which default to `entries.size <= 1`. A multi-group cascading menu collapses after selecting."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconCascadingDropdownMenu.kt:80
+    - text: "Constructing entries / children inline inside the composable body creates new instances on every recomposition. DropdownItem.children's KDoc explicitly requires stabilization (using remember), otherwise the cascade layer recomposes unnecessarily."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:336
+    - text: "It must be wrapped in a Scaffold, otherwise the overlay silently fails to appear. It bypasses this module's popup primitive and directly calls miuix-ui's OverlayCascadingListPopup."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/OverlayIconCascadingDropdownMenu.kt:128
+  visual:
+    submenu_marker: "A row with a submenu draws a chevron at its end (a 10×16.dp ArrowRight) instead of a checkmark, deliberately in a softer summary color; at the same time the accessibility role switches from Role.RadioButton to Role.Button"
+    second_level: "Second-level rows are always hasSubmenu = false; the first/last markers are controlled by the parent layer (the header occupies first, only the last child occupies last)"
+    button: "IconButton defaults to minimum 40×40.dp, corner radius 40.dp"
+  state: "No value state. The expanded state, press state, and the currently-expanded first-level item are all held internally; the expanded first-level item is recorded by **position**, which is why the order must be stable."
+  m3: "No counterpart. material3 has no built-in cascading/submenu DropdownMenu (you must nest Popups yourself), and androidx.preference's PreferenceScreen nesting is page-level navigation, not menu-level cascading."
+
+OverlayDropdownPopup:
+  summary: "The Overlay overlay primitive shared by Dropdown/Spinner/Menu: it renders a set of DropdownEntry into a Scaffold overlay. Use it directly when you want to assemble your own trigger (rather than a ready-made Preference row)."
+  gotchas:
+    - text: "The three parameters maxHeight, dropdownColors, and renderInRootScaffold **have no default values** and must be passed explicitly (maxHeight = null means unlimited). This is the opposite of the convention in all Preference-layer components."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:40
+    - text: "It is a public API but **the whole doc site has no corresponding page**, and there is no sidebar entry either. You can only read the source."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:35
+    - text: "Clicks are called back by (group index, item index), with two getOrNull bounds-guards: swapping entries for a shorter list while the overlay is shown will not crash, but the click is **silently discarded** -- with no indication."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:82
+    - text: "The overlay anchor is fixed to PopupPositionProvider.Align.End (right-aligned) and does not expose an alignment parameter."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:92
+    - text: "The entries overload's collapseOnSelection defaults to `entries.size <= 1`, the entry overload defaults to true -- the defaults are written again at the primitive layer rather than left entirely to the caller."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:72
+  visual:
+    align: "Fixed right-aligned"
+    width: "ListPopupColumn clamps the width to 200.dp–288.dp, and only the first 8 items' intrinsic widths participate in measurement"
+    rows: "Rows 20.dp left/right; the top of the first row / bottom of the last row of the whole overlay 20.dp, the rest 12.dp; a single line's inner text limited to 216.dp width"
+    divider: "A 1.5.dp divider between groups, 20.dp left/right and 4.dp top/bottom"
+  state: "Fully controlled: show / onDismiss / onDismissFinished are all given by the caller. The selection haptic is Confirm (the ContextClick on expand is emitted by the trigger). onDismissFinished fires only when the hide animation plays to completion, and not on mid-way cancellation -- if you use it to reset the press state, note that it is never called when the overlay is conditionally removed from composition."
+  m3: "Corresponds to material3's DropdownMenu itself. Differences: M3's menu content is an arbitrary composable slot with adjustable PopupProperties, here it is a fixed DropdownEntry data structure + fixed right alignment + fixed width range."
+
+OverlayDropdownDialog:
+  summary: "The Overlay-layer dialog-style option-list primitive: a list + one confirm button at the bottom. OverlaySpinnerPreference's dialog mode calls it."
+  gotchas:
+    - text: "title, dialogButtonString, and dropdownColors are all required with no default; show / onDismiss / onDismissFinished must also be handled by you. It is a public API but the doc site has no corresponding page."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:149
+    - text: "Rows inside the dialog **have no first/last special-casing** and always use 12.dp top/bottom padding (only popup mode has the 20/12 distinction). This is intentional, because the list is scrollable."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/DropdownEntriesContent.kt:79
+    - text: "The internal custom Layout strictly requires exactly 2 children (list + button); when the count is wrong it silently returns layout(0, 0), a 0×0 empty dialog, without throwing."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/OverlayDropdownPopup.kt:205
+    - text: "The LazyColumn's item key is a positionally-built string (`\"$entryIdx-$itemIdx\"`), not a content key. Reordering the list while the dialog is shown misaligns state."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/DropdownEntriesContent.kt:70
+  visual:
+    layout: "It measures the bottom button first and then gives the remaining height to the LazyColumn, so the button is never pushed off-screen by a long list"
+    margins: "The list is flush left/right with 24.dp top/bottom (insideMargin = DpSize(0.dp, 24.dp)); the button 24.dp left/right, 12.dp top, minimum height 50.dp"
+    rows: "Rows 28.dp left/right, minimum height 56.dp, minimum width 200.dp and fillMaxWidth; uniformly 12.dp top/bottom; a single line's inner text is not width-limited (only popup mode limits it to 216.dp)"
+    colors: "The accompanying DropdownDefaults.dialogDropdownColors() uses tertiaryContainer as the selected background and a transparent container, different from popup's surfaceContainer"
+  state: "Fully controlled. The confirm button directly calls onDismiss (the Window version goes through LocalDismissState; the two are ultimately equivalent)."
+  m3: "Corresponds to material3's AlertDialog with a single-select list inside, or the dialog popped up by androidx.preference's ListPreference. Difference: there is no \"cancel/confirm\" two-button semantics here, only a single close button, and selecting takes effect immediately."
+
+WindowDropdownMenu:
+  summary: "An action menu that uses a whole row as its trigger, with the overlay on a platform window; it does not depend on a Scaffold, and the menu can extend beyond the host bounds."
+  gotchas:
+    - text: "It has only the entry / entries overloads, no convenient items version, and no selectedIndex / onSelectedIndexChange / showValue."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowDropdownMenu.kt:71
+    - text: "It has no renderInRootScaffold parameter (the Overlay version does), so copying a call from the Overlay version fails to compile."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowDropdownMenu.kt:71
+    - text: "When all groups are empty the whole row is automatically disabled and the overlay does not enter composition."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowDropdownMenu.kt:104
+    - text: "collapseOnSelection: the entry overload defaults to true, the entries overload defaults to `entries.size <= 1` (with multiple groups it does not collapse after selecting)."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowDropdownMenu.kt:84
+    - text: "The collapse path goes through LocalDismissState rather than calling onDismiss directly; that CompositionLocal defaults to null, so in theory if it cannot be obtained it silently fails to collapse."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/DismissState.kt:26
+  visual:
+    end: "On the right there is only a 10×16.dp up-down arrow, no value text"
+    popup: "Width 200–288.dp, only the first 8 items measured for width; rows 20.dp left/right, first/last 20.dp and the rest 12.dp, inner text limited to 216.dp width; right-aligned"
+    row: "Minimum height 56.dp, default padding 16.dp"
+  state: "No value state. The expanded state and press state use internal remember (not Saveable); the press highlight persists until the overlay's exit animation finishes."
+  m3: "Corresponds to material3's DropdownMenu attached to a ListItem. The Window version's platform Popup behavior is closest to M3's default implementation, but expanded cannot be controlled externally."
+
+WindowIconDropdownMenu:
+  summary: "An IconButton-triggered action menu on a platform window; it does not depend on a Scaffold."
+  gotchas:
+    - text: "It has no Preference slots such as title/summary and renders `Box { IconButton; Popup }`; the trigger's appearance is decided by the final required content trailing lambda."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconDropdownMenu.kt:75
+    - text: "It has only the entry / entries overloads, no convenient items version; and no renderInRootScaffold."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconDropdownMenu.kt:63
+    - text: "When entries is all empty the IconButton is directly disabled and grays out, rather than \"tapping produces no menu\"."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconDropdownMenu.kt:92
+    - text: "It lives in the optional artifact miuix-preference (the WindowDropdownPopup it transitively calls is also in that artifact), so a project depending only on miuix-ui cannot use this component; the doc frontmatter only writes requiresScaffoldHost / hostComponent / popupHost, with no statement of artifact ownership."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconDropdownMenu.kt:28
+    - text: "The doc example's Import section is missing the extension icons (MiuixIcons.Edit etc. are in the separate artifact miuix-icons), so copying it gives an unresolved reference."
+      severity: medium
+      evidence: docs/components/windowicondropdownmenu.md:22
+  visual:
+    button: "IconButton defaults to minimum 40×40.dp, corner radius 40.dp; the four IconButtonDefaults parameters are forwarded as-is"
+    popup: "Width 200–288.dp, only the first 8 items measured for width; rows 20.dp left/right, first/last 20.dp and the rest 12.dp, inner text limited to 216.dp width; right-aligned"
+  state: "No value state. The expanded state and press state use internal remember; the press highlight is carried by the IconButton's holdDownState and is not reset until the overlay's exit animation finishes."
+  m3: "Corresponds to material3's IconButton + DropdownMenu. Same difference as OverlayIconDropdownMenu: expanded cannot be driven externally, and menu items are a fixed data structure rather than arbitrary composables."
+
+WindowIconCascadingDropdownMenu:
+  summary: "An IconButton-triggered two-level cascading menu on a platform window; it does not depend on a Scaffold."
+  gotchas:
+    - text: "The depth is hard-limited to 2; deeper children are ignored and a warning is println'd once (not entirely silently)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingMorphContent.kt:117
+    - text: "During the time the menu is expanded, the order of entry / item must stay stable: the cascade layer tracks the expanded item by positional index rather than object reference, so reordering while expanded misaligns the submenu."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconCascadingDropdownMenu.kt:27
+    - text: "Both collapseOnSelection overloads default to true, unlike other entries overloads which default to `entries.size <= 1`."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/menu/WindowIconCascadingDropdownMenu.kt:77
+    - text: "A first-level item with children has its onClick ignored (clicking expands it), while second-level items are treated as leaves and call onClick -- the rule \"non-null children means onClick is ignored\" only holds at the first level."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:325
+    - text: "There is no renderInRootScaffold; constructing entries/children inline creates new instances on every recomposition, and the KDoc requires stabilizing with remember."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:336
+  visual:
+    submenu_marker: "A row with a submenu draws a 10×16.dp chevron at its end instead of a checkmark, in a softer summary color; the accessibility role switches from RadioButton to Button"
+    button: "IconButton defaults to minimum 40×40.dp, corner radius 40.dp"
+  state: "No value state. The expanded state, press state, and the currently-expanded first-level item are all held internally; the expanded first-level item is recorded by position."
+  m3: "No counterpart. material3 has no built-in cascading-submenu DropdownMenu."
+
+WindowDropdownPopup:
+  summary: "The Window-layer dropdown overlay primitive, shared by the Window variants of Dropdown/Spinner/Menu. Use it directly when you want to assemble your own trigger."
+  gotchas:
+    - text: "maxHeight and dropdownColors have no default values and must be passed explicitly (maxHeight = null means unlimited); there is no renderInRootScaffold (the Overlay version has it)."
+      severity: high
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:41
+    - text: "A public API, but the doc site has no corresponding page and there is no sidebar entry either; you can only read the source."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:36
+    - text: "The collapse after selection does not call onDismiss directly but reads LocalDismissState from inside the overlay and calls it; that CompositionLocal defaults to null, and when it cannot be obtained it silently fails to collapse. Ultimately equivalent to the Overlay version's direct onDismiss, but the debugging path differs."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:92
+    - text: "Clicks are called back by (group index, item index), with two getOrNull bounds-guards: swapping for a shorter list while shown will not crash, but the click is silently discarded."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:88
+    - text: "The overlay anchor is fixed to right-aligned (PopupPositionProvider.Align.End) and does not expose an alignment parameter."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:78
+  visual:
+    align: "Fixed right-aligned"
+    width: "ListPopupColumn clamps the width to 200.dp–288.dp, and only the first 8 items' intrinsic widths participate in measurement"
+    rows: "Rows 20.dp left/right; the overlay's first-row top / last-row bottom 20.dp, the rest 12.dp; a single line's inner text limited to 216.dp width"
+    divider: "A 1.5.dp divider between groups, 20.dp left/right and 4.dp top/bottom"
+  state: "Fully controlled: show / onDismiss / onDismissFinished are given by the caller. Selection haptic Confirm. onDismissFinished fires only when the hide animation plays to completion, and is never called when the overlay is conditionally removed from composition."
+  m3: "Corresponds to material3's DropdownMenu itself (a platform Popup). Difference: the content is a fixed DropdownEntry data structure, and alignment and width range are hard-coded."
+
+WindowDropdownDialog:
+  summary: "The Window-layer dialog-style option-list primitive: a list + a confirm button at the bottom. WindowSpinnerPreference's dialog mode calls it."
+  gotchas:
+    - text: "title, dialogButtonString, and dropdownColors are required with no defaults; there is no renderInRootScaffold. A public API but the doc site has no corresponding page."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:145
+    - text: "The bottom confirm button's onClick goes through `dismiss?.invoke()` (LocalDismissState), while the Overlay version is a direct onDismiss. The two are equivalent, but LocalDismissState defaults to null, so in theory if it cannot be obtained the button does nothing when tapped."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/WindowDropdownPopup.kt:196
+    - text: "Rows inside the dialog always use 12.dp top/bottom padding, with no first/last special-casing (only popup mode has the 20/12 distinction)."
+      severity: low
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/DropdownEntriesContent.kt:79
+    - text: "The LazyColumn's item key is a positionally-built string, not a content key; reordering the list while shown misaligns state. The internal Layout requires exactly 2 children, otherwise it silently returns 0×0."
+      severity: medium
+      evidence: miuix-preference/src/commonMain/kotlin/top/yukonga/miuix/kmp/popup/DropdownEntriesContent.kt:70
+  visual:
+    layout: "It measures the bottom button first and then gives the remaining height to the LazyColumn, so the button is never pushed off-screen by a long list"
+    margins: "The list is flush left/right with 24.dp top/bottom; the button 24.dp left/right, 12.dp top, minimum height 50.dp"
+    rows: "Rows 28.dp left/right, minimum height 56.dp, minimum width 200.dp and fillMaxWidth; uniformly 12.dp top/bottom; inner text not width-limited"
+    colors: "The accompanying dialogDropdownColors(): selected background tertiaryContainer, transparent container"
+  state: "Fully controlled. show / onDismiss / onDismissFinished are given by the caller; the close action is routed internally through LocalDismissState."
+  m3: "Corresponds to material3's AlertDialog with a nested single-select list, or androidx.preference's ListPreference dialog. Difference: there is only one close button, selecting takes effect immediately, and there is no confirm/cancel two-button semantics."

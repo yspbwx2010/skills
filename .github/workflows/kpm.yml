@@ -1,0 +1,44 @@
+name: kpm
+
+on:
+  push:
+    branches: [main]
+    paths: ["kpm/**", ".github/workflows/kpm.yml"]
+  pull_request:
+    paths: ["kpm/**", ".github/workflows/kpm.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: kpm
+
+jobs:
+  kpm:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agent Skills spec (frontmatter, size, links)
+        run: python3 tools/validate_skill.py
+
+      - name: Install clang / lld
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+
+      - name: Check out the KernelPatch release the skill documents
+        run: |
+          ref=$(sed -n 's/.*kernelpatch-version: "\(.*\)"/\1/p' skills/kpm/SKILL.md)
+          echo "KernelPatch ref: $ref"
+          git clone --quiet --depth 1 --branch "$ref" \
+            https://github.com/bmax121/KernelPatch.git "$RUNNER_TEMP/kp"
+
+      - name: Template builds into a loadable arm64 KPM
+        run: python3 tools/check_kpm.py --kp-src "$RUNNER_TEMP/kp"

@@ -1,0 +1,34 @@
+name: apm
+
+on:
+  push:
+    branches: [main]
+    paths: ["apm/**", ".github/workflows/apm.yml"]
+  pull_request:
+    paths: ["apm/**", ".github/workflows/apm.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apm
+
+jobs:
+  apm:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agent Skills spec (frontmatter, size, links)
+        run: python3 tools/validate_skill.py
+
+      - name: Template scaffolds a module apd would accept
+        run: python3 tools/check_apm.py

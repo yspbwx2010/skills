@@ -1,0 +1,10 @@
+{
+  "name": "apm",
+  "description": "Build Magisk modules: standard Magisk-style systemless modules as used by APatch — module.prop, the zip + customize.sh install flow, overlayfs systemless /system changes, boot scripts, sepolicy.rule, WebUI — plus the traps when porting Magisk/KernelSU modules.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": { "name": "yspbwx2010" },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": ["apatch", "apm", "module", "android", "magisk", "kernelsu", "systemless"],
+  "skills": "./skills/"
+}

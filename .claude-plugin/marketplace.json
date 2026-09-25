@@ -1,0 +1,34 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "yspbwx2010-skills",
+  "description": "yspbwx2010's agent skills, one plugin per skill",
+  "owner": {
+    "name": "yspbwx2010"
+  },
+  "plugins": [
+    {
+      "name": "miuix",
+      "description": "Build Compose Multiplatform apps with Miuix: scaffold, source-extracted signatures, HyperOS visual specs and compile traps",
+      "source": "./miuix",
+      "category": "development"
+    },
+    {
+      "name": "kpm",
+      "description": "Write, build and load KernelPatch Modules (KPM): lifecycle, exported kernel API, inline/syscall hooks, aarch64-none-elf build",
+      "source": "./kpm",
+      "category": "development"
+    },
+    {
+      "name": "apm",
+      "description": "Build Magisk modules: standard Magisk-style systemless modules as used by APatch \u2014 module.prop, the customize.sh install flow, overlayfs systemless /system changes, boot scripts, WebUI",
+      "source": "./apm",
+      "category": "development"
+    },
+    {
+      "name": "metamodule",
+      "description": "Develop a metamodule: the pluggable mount/install backend for KernelSU (and APatch) modules \u2014 metamount.sh / metainstall.sh / metauninstall.sh, boot order, source=KSU",
+      "source": "./metamodule",
+      "category": "development"
+    }
+  ]
+}

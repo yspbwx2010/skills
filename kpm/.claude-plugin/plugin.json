@@ -1,0 +1,10 @@
+{
+  "name": "kpm",
+  "description": "Write, build and load KernelPatch Modules (KPM): source-verified lifecycle macros, the exported kernel API, inline/syscall hooks, the aarch64-none-elf build, and how to load a .kpm.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": { "name": "yspbwx2010" },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": ["kpm", "kernelpatch", "apatch", "kernel", "android", "arm64", "hook"],
+  "skills": "./skills/"
+}

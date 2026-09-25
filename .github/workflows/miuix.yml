@@ -1,0 +1,111 @@
+name: miuix
+
+# Every generated file in the miuix skill can be checked against the Miuix source it came from.
+# This workflow is that check: a PR that edits the hand-written layer, the tools or the
+# generated references must leave all of them consistent with the pinned Miuix release.
+
+on:
+  push:
+    branches: [main]
+    paths: ["miuix/**", ".github/workflows/miuix.yml"]
+  pull_request:
+    paths: ["miuix/**", ".github/workflows/miuix.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: miuix
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Parser self-test
+        run: python3 tools/test_sync.py
+
+      - name: Agent Skills spec (frontmatter, size, links)
+        run: python3 tools/validate_skill.py
+
+      - name: Every Miuix symbol in the skill exists
+        run: python3 tools/check_skill.py
+
+      - name: references/ is up to date with data/
+        run: python3 tools/render.py --check
+
+      - name: Check out the Miuix release the data was extracted from
+        run: |
+          ref=$(python3 -c "import json;print(json.load(open('data/miuix-api.json'))['source_ref'])")
+          echo "Miuix ref: $ref"
+          git clone --quiet --depth 1 --branch "$ref" https://github.com/compose-miuix-ui/miuix.git "$RUNNER_TEMP/miuix"
+
+      - name: data/miuix-api.json matches that source
+        run: python3 tools/sync.py --src "$RUNNER_TEMP/miuix" --check
+
+      - name: Every path:line evidence in the hand-written layer exists
+        run: python3 tools/check_evidence.py --src "$RUNNER_TEMP/miuix"
+
+  # The skill's promise is "an empty directory to a compiling app in one command".
+  # Build exactly what users get: generate with new_app.py, then compile, with zero warnings.
+  template:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - layout: kmp
+            targets: android,desktop,web
+            tasks: ":composeApp:compileKotlinJvm :composeApp:wasmJsBrowserDistribution :androidApp:assembleDebug"
+          - layout: kmp
+            targets: desktop
+            tasks: ":composeApp:compileKotlinJvm"
+          - layout: android
+            targets: android
+            tasks: ":app:assembleDebug"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android SDK Platform 37 (Miuix 0.9.4 requires compileSdk 37)
+        if: contains(matrix.targets, 'android')
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Scaffold rejects bad input
+        run: |
+          ! python3 skills/miuix/scripts/new_app.py "$RUNNER_TEMP/bad" --name X --package fun.example
+          ! python3 skills/miuix/scripts/new_app.py "$RUNNER_TEMP/bad" --name X --package com.example.x --layout android --targets desktop
+
+      - name: Generate
+        run: >
+          python3 skills/miuix/scripts/new_app.py "$RUNNER_TEMP/app"
+          --name "CI App" --package com.example.ciapp
+          --layout ${{ matrix.layout }} --targets ${{ matrix.targets }}
+
+      - name: Build (fails on any Kotlin warning)
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          ./gradlew ${{ matrix.tasks }} --stacktrace 2>&1 | tee build.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -E '^w: ' build.log; then echo "::error::Kotlin warnings in the template"; exit 1; fi

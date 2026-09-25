@@ -1,0 +1,110 @@
+# Pager gesture-conflict handling (added in 0.9.4, utils/PagerGestureUtils.kt)
+
+Modifier.pagerGestureOverride:
+  summary: "Attached to a HorizontalPager's modifier to resolve the conflict where \"when a page contains a vertical list, you can't swipe horizontally to change pages during the list's inertia scroll/spring-back.\" It dispatches by mode: CrossAxisInterceptor (default) = horizontalPagerSwipeOverride, which takes over horizontal drag and snapping itself; TapToHalt = iosStyleMomentumHalt, which only halts the child list's inertia while paging is still left to the native pager; Native = returns this unchanged."
+  gotchas:
+    - text: "The default CrossAxisInterceptor mode requires the HorizontalPager to set both userScrollEnabled = false and pageNestedScrollConnection = PagerGestureNestedScrollConnection; missing either one causes two gesture sets to fight over the same PagerState or abnormal spring-back. These two parameters are on the HorizontalPager, not on this modifier, and adding only the modifier without changing the pager parameters is the most common wrong wiring."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:138
+    - text: "Conversely, when switching to Native or TapToHalt you must restore userScrollEnabled and pageNestedScrollConnection to the pager defaults: these two branches don't use pagerState at all and don't drive the pager (TapToHalt only halts the child list and swallows that one horizontal swipe). Keeping CrossAxis's userScrollEnabled = false gives a pager that can't be swiped at all. To switch modes at runtime, switch these two parameters together by mode as the sample does."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:475
+    - text: "How to choose among the four overloads: when flingTracker is not passed, Kotlin overload resolution picks the two @Composable ones (they have fewer unspecified default parameters), which internally remember a PagerFlingTrackerConnection. So writing Modifier.pagerGestureOverride(state) in a non-@Composable context (a plain fun returning Modifier, inside a remember { } lambda) reports \"@Composable invocations can only happen from the context of a @Composable function\"; to use it there, pass flingTracker explicitly (null is fine too, only TapToHalt then stops working)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:516
+    - text: "The non-Composable overload silently returns this when mode = TapToHalt and flingTracker == null, with no error and no warning, appearing as \"chose iOS-like but nothing happens.\" When passing the tracker yourself you must remember { PagerFlingTrackerConnection() }; inlining new makes each recomposition swap the instance, and pointerInput keyed by it restarts the gesture coroutine and loses the in-progress inertia-tracking state."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:482
+    - text: "The mode: Int overload is interpreted by the ordinal of PagerInterceptionMode.entries: 0 = Native, 1 = CrossAxisInterceptor, 2 = TapToHalt; out of range (negative or ≥ 3) doesn't throw but silently falls to Native. Note the Int overload has no default value, whereas the Enum overload defaults to CrossAxisInterceptor (ordinal 1), so a 0 read from settings is not the \"default mode.\""
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:499
+    - text: "When enabled = false every branch just returns this and the modifier is a complete no-op — it does not disable paging. Under the CrossAxis configuration userScrollEnabled is already false, so the pager then becomes completely unswipeable; if userScrollEnabled is still true, the native gesture pages as usual. To turn off swipe-paging you must set both enabled and userScrollEnabled to false; to \"turn off interception while keeping native swiping\" you must set userScrollEnabled back to true."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:145
+    - text: "Only applicable to HorizontalPager. CrossAxis's recognition logic is hard-wired to judge on the x-axis and scroll by delta.x, yielding to the child once the vertical exceeds slop; attached to a VerticalPager it becomes horizontal drag driving vertical paging while vertical drag can't page. TapToHalt's tracker also only tracks child inertia in the y direction."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:227
+    - text: "A 0.9.4-added API whose signature will change in the next version: an unreleased commit on main has added a required parameter flingBehavior: FlingBehavior to each pagerGestureOverride overload, removed horizontalPagerSwipeOverride, and renamed CrossAxisInterceptor to CrossAxis (ordinal unchanged). When upgrading miuix you must change all call sites; the Int overload that persists the mode by ordinal is least affected by the rename."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:462
+  state: "The modifier itself holds no business state; the page index is all in the caller's PagerState. CrossAxis's node internally holds a running PagerState.scroll(UserInput) coroutine; the @Composable overloads additionally remember a PagerFlingTrackerConnection (created even when mode is not TapToHalt). mode usually comes from persisted settings, passing the ordinal directly with the Int overload."
+  m3: "androidx.compose.foundation.pager has no counterpart. The official docs' stated motivation is: in the native HorizontalPager, during a child list's inertia scroll or spring-back, a horizontal swipe cannot reliably change pages. CrossAxis mode makes that one horizontal swipe page directly; TapToHalt mode fixes the behavior as \"the first horizontal swipe only halts, doesn't page; the next one pages.\" Under CrossAxis the snap animation and velocity thresholds are all implemented by Miuix itself, and HorizontalPager's flingBehavior parameter has no effect on touch swiping."
+
+Modifier.horizontalPagerSwipeOverride:
+  summary: "The actual implementation of pagerGestureOverride's CrossAxisInterceptor mode: it recognizes horizontal drag preemptively in the Initial pass and drives the pager by putting the drag and the post-release snap into the same PagerState.scroll(UserInput); vertical drag is yielded to the page content. Normally use pagerGestureOverride directly; you don't need to call this separately."
+  gotchas:
+    - text: "It decides in the Initial pass (parent before child): if the horizontal displacement exceeds touchSlop and is greater than the vertical displacement it consumes the event. All horizontally swipeable children in the page (LazyRow, a horizontally scrolling TabRow, Slider, carousels) have their horizontal swipe intercepted by the pager and can't scroll themselves. The native pager gives the child priority. Don't use CrossAxis mode for pages that contain horizontal gestures, and put things like TabRow outside the pager."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:227
+    - text: "Every press (including a plain tap) cancels the pager's in-progress animation and opens a new scroll(UserInput), snapping to the nearest page by rounding the current position on release. So if the user taps the page content during a springAnimateToPage paging animation, the pager stops at the page nearest to the position at that moment rather than the original target page; logic observing pagerState.isScrollInProgress will also briefly see true on each tap."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:182
+    - text: "The release-snap rule is hard-coded: a velocity above 400.dp/s rounds toward the velocity direction (ceil/floor), otherwise it rounds to nearest, then animates over with PagerNavigationSpringSpec, at most one page away from the current displayed position. It doesn't read HorizontalPager's flingBehavior / snapPositionalThreshold, and there is no tunable parameter."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:260
+    - text: "After userScrollEnabled = false the native pager no longer handles the mouse wheel/touchpad, and this modifier makes up for it in the Main pass: only wheel/Pan events whose horizontal component is greater than the vertical page (each wheel notch is converted at 48.dp), and a purely vertical wheel does not page."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:307
+  state: "No external state. The node internally holds motionJob (the current scroll coroutine) and a wheel-event channel; when the pagerState instance changes or the node detaches (including the modifier being removed because enabled goes from true to false) the in-progress animation is cancelled."
+  m3: "Replaces the native HorizontalPager's draggable + flingBehavior. Natively it is negotiated by pageNestedScrollConnection and the child, with the child taking priority; here the parent intercepts preemptively in the Initial pass. It provides its own pageLeft/pageRight accessibility actions (paging via springAnimateToPage) and handles the directions of RTL and reverseLayout."
+
+PagerGestureNestedScrollConnection:
+  summary: "The NestedScrollConnection singleton paired with CrossAxis mode: it only swallows the remaining horizontal velocity in onPostFling and leaves the vertical velocity unchanged for the outer layer, without overriding onPreScroll/onPostScroll. Per the KDoc, vertical scroll and velocity are left to the page content, including when the pager rests between two pages."
+  gotchas:
+    - text: "It is passed to HorizontalPager's pageNestedScrollConnection parameter, not attached with Modifier.nestedScroll on the page's inner list or on the pager's modifier. It is used only in CrossAxis mode; the official docs require Native / TapToHalt modes to restore the pager defaults, and the sample switches between it and PagerDefaults.pageNestedScrollConnection(pagerState, Orientation.Horizontal) by mode."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:128
+
+PagerInterceptionMode:
+  summary: "The three modes of pagerGestureOverride: Native (native gesture, modifier is a no-op), CrossAxisInterceptor (a horizontal swipe can interrupt the paging process and child-list scroll, the default), TapToHalt (during a child list's inertia the first horizontal swipe only halts, doesn't page)."
+  gotchas:
+    - text: "The title field is a display name for the settings UI; Native's title is \"Default,\" but pagerGestureOverride's default mode is CrossAxisInterceptor (title \"Cross-Axis\"). Judging whether it is the default mode by title == \"Default\" is wrong."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:67
+    - text: "The ordinal order is the persistence format: Native = 0, CrossAxisInterceptor = 1, TapToHalt = 2; the mode: Int overload is interpreted in this order, out of range falls to Native. When persisting, store the ordinal rather than the name to be more resilient to enum renames."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:65
+
+PagerFlingTrackerConnection:
+  summary: "The NestedScrollConnection used by TapToHalt mode: in onPreFling it records whether the child is doing a vertical inertia (isChildFlinging); after being set haltFling on press, it throws a CancellationException in the child inertia's next-frame onPreScroll to cut off the inertia, and in onPostFling swallows the remaining vertical velocity so it isn't passed to the outer layer."
+  gotchas:
+    - text: "isChildFlinging and haltFling are read-only externally (internal set); the caller cannot trigger a halt manually and can only read them to drive the UI. You also don't need to Modifier.nestedScroll(tracker) yourself: iosStyleMomentumHalt already attaches this connection on its own node, and only attaching it on the pager's modifier (the ancestor of the page's inner list) can receive the child list's fling."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:418
+    - text: "It only recognizes vertical: isChildFlinging = available.y != 0f, and the halt too only takes effect in the y direction. A horizontal list's inertia in the page is not recognized."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:394
+
+Modifier.iosStyleMomentumHalt:
+  summary: "The implementation of pagerGestureOverride's TapToHalt mode: it attaches flingTracker's nested scroll; on press, if the child list is doing inertia scroll it requests a halt, and after this gesture is judged to be a horizontal swipe (dx > slop and dx > 2·dy) it swallows it, so this one doesn't page; with no inertia it doesn't intervene at all and leaves the horizontal swipe to the native pager."
+  gotchas:
+    - text: "It doesn't receive PagerState and never drives the pager; paging relies entirely on HorizontalPager's own gesture. So you must keep userScrollEnabled = true and the default pageNestedScrollConnection, and cannot keep CrossAxis's configuration."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:411
+    - text: "haltFling = true is set on press, and the inertia is cut off on the next frame before the finger even lifts; then if it is judged a vertical drag, haltFling is reset and handed to the list to handle normally. onHalted is called back at the moment of press (as long as there was inertia then), and does not mean this gesture is ultimately a horizontal swipe."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:429
+  state: "All state is in the passed-in flingTracker, which the caller must remember; pointerInput is keyed by flingTracker / enabled / onHalted, and a change in any of them restarts the gesture coroutine."
+  m3: "androidx pager has no counterpart. This makes \"during inertia the first horizontal swipe only halts, doesn't page\" a deterministic behavior, mimicking iOS's inertia halt; the rest of the time it is entirely native pager behavior."
+
+PagerState.springAnimateToPage:
+  summary: "Uses the PagerNavigationSpringSpec spring to animate the pager to a target page, for TabRow / navigation-item clicks, replacing animateScrollToPage. A suspend function, to be called in a coroutine."
+  gotchas:
+    - text: "When target is not within 0 until pageCount it returns directly, without clamping and without throwing; the native animateScrollToPage clamps an out-of-range page index into the legal range. Passing pageCount or -1 does nothing."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:94
+    - text: "It runs with MutatePriority.UserInput: a Default-priority scroll such as a focus scroll cannot interrupt it, while it itself interrupts an in-progress same-level scroll (including a pager being dragged by the user). Conversely, under CrossAxis mode any new press cancels it at the same-level priority and snaps to the page nearest at that moment."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:95
+    - text: "When the page hasn't finished its first layout (layoutInfo.pageSize == 0) it doesn't animate and just sets currentPage to the target page."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:109
+  state: "It only reads and writes the passed-in PagerState. As soon as the animation starts it updateTargetPage(target), so pagerState.targetPage immediately becomes the target page, while currentPage changes as the scroll passes through intermediate pages; which one TabRow's selectedTabIndex is bound to determines whether the indicator jumps directly or steps page by page."
+  m3: "Corresponds to PagerState.animateScrollToPage. Differences: no pageOffsetFraction or animationSpec parameters, the spring is fixed to PagerNavigationSpringSpec (the native default is a StiffnessMediumLow spring); across multiple pages the native one first jumps near the target then animates, while here it scrolls all the way by the actual distance and every intermediate page gets composed; an out-of-range target is ignored directly rather than clamped; the priority is UserInput rather than Default."
+
+PagerNavigationSpringSpec:
+  summary: "The spring used for Miuix pager paging (stiffness 322.2, damping ratio about 0.9, visibilityThreshold 0.5f), used by both springAnimateToPage and CrossAxis mode's release-snap."
+  gotchas:
+    - text: "In native mode (Native / TapToHalt) HorizontalPager still uses its own flingBehavior, so the feel is inconsistent with the Tab-click spring. To unify them, pass flingBehavior = PagerDefaults.flingBehavior(state = pagerState, snapAnimationSpec = PagerNavigationSpringSpec) as the sample does. It is a SpringSpec<Float> and can only be used on Float animations."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/PagerGestureUtils.kt:83

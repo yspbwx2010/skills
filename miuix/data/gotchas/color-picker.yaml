@@ -1,0 +1,458 @@
+# The color-picker family (ColorPicker / ColorPalette / four color-space slider sets / drawCheckerboard)
+#
+# 24 public APIs in total (21 Composables in ColorPicker.kt + Modifier.drawCheckerboard + the ColorSpace enum, plus ColorPalette).
+# The official docs have two pages (colorpicker / colorpalette): ColorPicker, ColorPalette and ColorSpace have prose, the four Hsv* sliders have their own sections and examples,
+# but the other 12 OkHsv/OkLch/OkLab sliders are only listed by name in a table with no parameter docs; Modifier.drawCheckerboard and the whole top.yukonga.miuix.kmp.color package have zero docs.
+# Three facts that run through the whole family; keep them in mind before the individual entries:
+#   1. No slider has a modifier parameter; they hardcode fillMaxWidth() + height(26.dp), so the size is not adjustable.
+#   2. All four pickers are "self-held state + weak sync", not purely controlled: changing the reported color back to an old value does not roll them back.
+#   3. OkLab / OkLch use a non-standard OkLab that skips sRGB linearization, a different definition from the one OkHSV uses.
+
+ColorPicker:
+  summary: The unified entry point for the color picker; it dispatches by colorSpace to one of the four implementations HsvColorPicker / OkHsvColorPicker / OkLabColorPicker / OkLchColorPicker; it contains no UI logic itself, just a when dispatcher. When you want to fix a specific color space, using the concrete implementation directly saves a layer.
+  gotchas:
+    - text: "It is not a purely controlled component. The child Picker stores the internal H/S/V in a keyless remember, and only reflows when the external color differs from both 'the last synced external value' and 'the current internal value'. A typical failure: after the user drags, you store color (internal value == external value, so no sync and lastApplied isn't updated either), then tapping 'reset' changes color back to the initial value —— at this point externalArgb == lastAppliedExternalColorArgb, the condition short-circuits, and the sliders and preview don't budge. To truly reset you must swap the Picker's key to force a rebuild."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:161-176
+    - text: "Conversely, when onColorChanged does nothing (or hardcodes color to a constant), the Picker can still be dragged and change color —— because the state is internal. It looks 'usable', but the color you receive is always stale."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:142-146
+    - text: "Switching colorSpace at runtime discards the internal state being edited. The four branches are different groups of the when, so switching away destroys it and switching back re-initializes via remember from the current color. Only when you actually write the value from onColorChanged back to color is the switch lossless; otherwise a single switch returns to the original color. The official example opens a separate card for each of the four color spaces, each holding its own state, rather than switching a single Picker."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:78-118
+    - text: "colorSpace is of type top.yukonga.miuix.kmp.basic.ColorSpace, which shares its name with androidx.compose.ui.graphics.colorspace.ColorSpace. IDE auto-import very easily picks the wrong one, and when it does the error is a type mismatch rather than 'symbol not found'. The docs' Import section doesn't give this line either."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1298-1303
+    - text: "In the when, HSV takes the else fallback rather than an explicit ColorSpace.HSV branch; behaviorally equivalent, but it means any future enum value silently falls to HSV instead of a compile error."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:109-117
+  visual:
+    layout: "Column + Arrangement.spacedBy(12.dp), a preview bar + 4 sliders, 5 rows total"
+    preview: "fillMaxWidth × 26.dp, clipped to CircleShape, the whole block disappears when showPreview=false (and loses 12.dp of spacing too)"
+    modifier: "modifier only affects the outermost Column; the slider height, preview height, and row spacing are all hardcoded and unchangeable"
+  state: "Self-holding state (uncontrolled with sync). Internally it stores the decomposed channel values in a remember{} plus a lastAppliedExternalColorArgb watermark, and does a one-way weak sync in a SideEffect. onColorChanged is required and non-null, and fires only when the new color's toArgb() differs from the passed color's toArgb() (the same ARGB won't call back twice). You must remember a Color state yourself and write it back in the callback, or the external and internal will drift apart permanently."
+  m3: "There is no color picker in androidx.compose.material3, so there is no counterpart. The only analogy is M3's Slider —— but M3 Slider is purely controlled (value/onValueChange), while this Miuix set is self-holding state, and that difference is the easiest one to trip over when migrating."
+
+ColorPalette:
+  summary: "An HSV swatch grid (default 7 rows × 12 hue columns + 1 gray column) plus a built-in Alpha slider, drawn on a single Canvas, select-on-press, drag-to-select continuously. Good for 'picking one from preset colors', not for precise color selection —— it can only produce the discrete colors in the grid."
+  gotchas:
+    - text: "It is snap-based: the color you pass isn't displayed as-is but decomposed into HSV and snapped to the nearest cell. In the default rows=7 S/V table, when s=1 the highest v is only 0.85, so there is no pure color anywhere in the swatch —— pass Color.Red and the indicator ring lands on the Hsv(0,100,85) cell (about #D90000), while the top preview bar on first render still shows the pure red you passed; the two don't match; only tapping that cell makes onColorChanged emit #D90000. The first composition doesn't proactively fire the callback, so 'parent state == highlighted cell' never holds until the user's first tap."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:104-113
+    - text: "The nearest-rounding of hue columns doesn't handle wraparound. col is obtained by rounding (h%360)/360*hueColumns and then coerceIn(0, hueColumns-1); with hueColumns=12, h≥345° is computed as 12 and clamped back to 11 (i.e. the 330° cell), whereas the truly nearest is the 0° cell. That is, colors in the 345°–360° magenta-toward-red segment are snapped to the wrong column."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:97-103
+    - text: "rows=7 uses a hand-tuned hardcoded S/V table, while other rows use a different formula. Changing rows from 7 to 8 is not 'one more row' but swaps the entire saturation/value distribution to a different algorithm, and the swatch's appearance changes abruptly."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:338-359
+    - text: "Passing 0 for rows or totalColumns crashes with an index out-of-bounds: the indicator reads cell edges via rowEdges[selectedRow+1] / colEdges[selectedCol+1], the array lengths are rows+1 / totalColumns+1, and there is no input validation. hueColumns=0 with includeGrayColumn=false is the same landmine."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:236-241
+    - text: "External color changes have a tolerance window of 1.5° hue / 0.02 saturation and value: an external color falling within the window only updates alpha and doesn't move the indicator ring. This is to avoid fighting the user's drag, but it also means programmatically nudging the color a tiny bit 'won't take'."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:85-95
+    - text: "The built-in Alpha slider can't be hidden (showPreview only governs the top preview bar), and ColorPalette has no hapticEffect parameter —— the internal HsvAlphaSlider uses the default haptics, which is not configurable and is inconsistent with ColorPicker."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:163-175
+    - text: "cornerRadius goes through Miuix's squircleClip rather than RoundedCornerShape, so the corner shape is a superellipse and doesn't line up with adjacent elements you build with RoundedCornerShape yourself."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPalette.kt:199-202
+  visual:
+    grid: "fillMaxWidth × 180.dp (hardcoded; modifier only affects the outermost Column, so the height can't be adjusted)"
+    preview: "fillMaxWidth × 26.dp, squircleBackground with 13.dp corners"
+    indicator: "diameter = indicatorRadius×2 (default 20.dp), a 6.dp white stroke ring + a 2.dp black 25% outer glow"
+    corner: "cornerRadius default 16.dp, squircleClip (superellipse), not RoundedCornerShape"
+    layout: "Column + Arrangement.spacedBy(12.dp): preview bar / grid / Alpha slider"
+  state: "Self-holding state: internally it stores only three values, selectedRow / selectedCol / alpha, and the color is computed live from the cell coordinates. The external color is reverse-solved into row/column via LaunchedEffect(color, rows, hueColumns, includeGrayColumn), with the tolerance short-circuit described above. The top preview shows lastEmittedColor ?: color, so before the first interaction it shows the external color and afterward always shows the color it emitted itself."
+  m3: "No counterpart."
+
+HsvColorPicker:
+  summary: "The implementation behind ColorPicker(colorSpace = ColorSpace.HSV); it can also be called directly to bypass dispatch. The classic four HSV sliders (hue / saturation / value / alpha), the most intuitive and least perceptually uniform option; use it for 'just pick a color' scenarios."
+  gotchas:
+    - text: "Same as ColorPicker: self-holding state + SideEffect weak sync; when the external side changes color back to the last synced value it won't roll back."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:161-176
+    - text: "The hue of grayscale colors (black / white / any gray) is undefined in HSV, and at initialization colorToHsv returns h=0. Pass Color.White in and the hue slider sits at the far left (red), so as soon as the user moves saturation it jumps straight to the red family, looking like the component 'messes with the color'."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:153-158
+    - text: "The initial value goes through 8-bit quantization: Color.toHsv() internally multiplies red/green/blue by 255 and rounds before computing HSV, so a non-8-bit-aligned float color (e.g. a Color from interpolation/animation) drifts on the order of 1/255 in and out."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:170-179
+  visual:
+    layout: "Column spacedBy 12.dp: preview bar 26.dp (CircleShape) + four 26.dp sliders for hue / saturation / value / alpha"
+    order: "H → S → V → A"
+  state: "Same as ColorPicker: remember four Floats (hue stored as 0..360, s/v/alpha stored as 0..1) + lastAppliedExternalColorArgb, and selectedColor is computed live with derivedStateOf."
+  m3: "No counterpart."
+
+HsvHueSlider:
+  summary: "A standalone HSV hue slider; its background is a 36-segment full-saturation, full-value rainbow gradient. It is the only one of the four Hsv* sliders that needs only its own hue value and no side channels."
+  gotchas:
+    - text: "The input and output units are asymmetric, the easiest thing in the whole set to get wrong: currentHue takes a 0..360 angle, while the onHueChanged callback gives you a 0..1 normalized value. If you write onHueChanged = { hue = it } per 'take it back and store it directly', the hue is compressed into the tiny 0..1 degree range and the slider appears stuck at the far left. The correct form is hue = it * 360f (the official docs example is correct, but nothing outside the KDoc warns you)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:256-271
+    - text: "There is no modifier parameter. Internally it hardcodes Modifier.fillMaxWidth() wrapped in a fixed 26.dp height, so you can neither change the dimensions nor add padding/click area —— to leave whitespace you must wrap it in a Box outside. All 16 sliders are like this."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:265-271
+    - text: "Only a draggable gesture, no tap gesture. Clicking the slider bar won't jump the thumb to the click position; you must drag past the touch slop for it to respond (the drag jumps to the finger position as soon as it begins, so it's 'jumps on drag' rather than 'no response and no jump on tap'). The ColorPalette on the same page uses awaitFirstDown and selects on a single tap —— the two have inconsistent interaction feel."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1198-1218
+    - text: "The passed-in value isn't clamped. A currentHue outside 0..360 (e.g. if you accumulate it yourself without taking the modulo) sends the indicator ring outside the track and it won't be clamped."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1240-1246
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed, no modifier parameter)"
+    corner: "CircleShape pill"
+    track: "36-segment Hsv(h,100,100) gradient; the gradient's start and end are inset by half the height (13.dp), so the 13.dp at each end is a solid-color plateau, aligned with the indicator ring's travel range"
+    indicator: "20.dp, a 6.dp white stroke ring + a 2.dp black 25% outer glow"
+    border: "0.5.dp stroke at Color.Gray 10% opacity"
+  state: "Purely controlled, no internal state. currentHue in (degrees), 0..1 out; you must multiply by 360 yourself to store it back."
+  m3: "No counterpart; M3 has only a generic Slider, and it is symmetric value/onValueChange."
+
+HsvSaturationSlider:
+  summary: "HSV saturation slider. The background gradient varies with currentHue (from that hue's white to that hue's full saturation), so you must pass the current hue in as well."
+  gotchas:
+    - text: "Here currentHue takes a 0..360 angle (the same unit as HsvHueSlider's input), while currentSaturation and the callback are 0..1. With two units mixed within the same slider set, when copying code it's very easy to feed in the 0..1 value from HsvHueSlider's callback directly, and the whole gradient then stays stuck at red forever."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:283-301
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture. Same as HsvHueSlider."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:283-288
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "two-stop gradient Hsv(h,0,100) → Hsv(h,100,100); note value is locked at 100 and doesn't vary with currentValue —— so for dark colors the gradient bar is brighter than the actual result"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+HsvValueSlider:
+  summary: "HSV value slider; the gradient runs from pure black to the color at 'the current hue + current saturation, value maxed'. You must pass both hue and saturation."
+  gotchas:
+    - text: "currentHue is 0..360, while currentSaturation / currentValue / the callback are all 0..1. The unit mixing is as above."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:314-330
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:314-319
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "Color.Black → Hsv(h, s*100, 100)"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+HsvAlphaSlider:
+  summary: "HSV alpha slider, backed by a Modifier.drawCheckerboard() checkerboard. You must pass all three H/S/V channels for it to draw the correct 'current color from transparent to opaque' gradient. This is also the one ColorPalette reuses internally."
+  gotchas:
+    - text: "currentHue is 0..360, and the other three parameters and the callback are all 0..1. All three side channels are required, and missing one fails to compile (there are no defaults)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:344-355
+    - text: "The checkerboard base is a hardcoded #CCCCCC/#AAAAAA light gray that doesn't follow MiuixTheme's light/dark. In a dark theme this slider is the only bright-gray block on screen, visually jarring, and the component exposes no parameter to change it (drawCheckerboard's color parameters are the hardcoded defaults here)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:361-364
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:344-350
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "baseColor(alpha=0) → baseColor(alpha=1), with a 3.dp checkerboard #CCCCCC / #AAAAAA underneath"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkHsvColorPicker:
+  summary: "The implementation behind ColorPicker(colorSpace = ColorSpace.OKHSV). Based on Ottosson OkHSV, with perceptual-lightness correction and gamut-cusp reparameterization, so the hue bar has no HSV-style 'bright yellow-green, dark blue-purple' light/dark banding. It is the most mathematically complete of the four color spaces and the only one that takes the correct sRGB linearization path."
+  gotchas:
+    - text: "Passing pure black (Color.Black / any r=g=b=0 color) as the initial value turns the internal state into NaN. When c=0, srgbToOkhsv takes the hue direction vector as a=b=0 (Transforms.kt:193-194), and in computeMaxSaturation(0,0) f1 and f2 happen to both be 0, so s -= (f*f1)/(f1*f1 - 0.5f*f*f2) is 0/0 = NaN (Transforms.kt:413-419); the NaN spreads through findCusp/getSTMax into tMax, and in the end both s and v are NaN (h is still 0). Consequences: the value and alpha bar gradients all become black-to-black, the two sliders' indicator-ring positions are undefined, and the SideEffect can never rescue it (the selectedColor computed from NaN happens to also be black, so externalArgb == internalArgb and the sync condition short-circuits). Because s and v are both broken, dragging just one slider is still black; you must drag both saturation and value to recover. Before passing pure black, offset it a little (e.g. Color(0.004f,0.004f,0.004f))."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:413-419
+    - text: "Same as ColorPicker: self-holding state + SideEffect weak sync; when the external side changes color back to the last synced value it won't roll back."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:409-424
+    - text: "The public OkHsv data class's own KDoc is wrong, and following it will necessarily fail. The KDoc declares h as 0..360 degrees and s/v as 0..100 percent, but toColor() merely forwards the three fields as-is to Transforms.okhsvToColor, which wants three 0..1 values. In testing, OkHsv(180f, 50f, 50f).toColor() (supposedly 'a medium-saturation cyan') returns pure red #FF0000; OkHsv(0f, 100f, 100f) is also #FF0000. The correct usage is OkHsv(0.5f, 0.5f, 0.5f). The library's own OkHsvColorPicker uses 0..1, contrary to the KDoc."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/OkHsv.kt:9-17
+    - text: "OkHSV is the only one of the four spaces without a Color.toOkHsv() extension —— to convert yourself outside the Picker you can only call Transforms.colorToOkhsv(color) directly, which returns a FloatArray rather than the OkHsv data class, with all three components 0..1."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/api/Extensions.kt:12-37
+    - text: "When OkHSV's v is dragged to 0, inside okhsvToSrgb c = (c*lNew)/l is 0/0 and all three channels compute to NaN; Compose's Color(Float,...) turns NaN into 0, so the result lands as opaque black rather than a crash, but any code on this path that catches the intermediate values itself must guard against NaN."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:246-254
+  visual:
+    layout: "Column spacedBy 12.dp: preview bar 26.dp (CircleShape) + four 26.dp sliders"
+    order: "H → S → V → A"
+  state: "Same as ColorPicker. All three internal channels are stored as 0..1 (unlike the HSV set which stores 0..360), and the initial value comes from Transforms.colorToOkhsv()."
+  m3: "No counterpart."
+
+OkHsvHueSlider:
+  summary: "OkHSV hue slider; its background is a perceptually uniform rainbow bar of 36 segments of okhsvToColor(h,1,1) —— placed next to HsvHueSlider you can directly see the latter's light/dark banding."
+  gotchas:
+    - text: "currentH is 0..1, not an angle —— exactly the opposite of HsvHueSlider's 0..360, while the callbacks on both are 0..1. Across the whole set 'hue' has three units in all: HsvHueSlider's input uses degrees, OkHsvHueSlider / OkLchHueSlider inputs use 0..1, and the h fields of the three data classes Hsv/OkHsv/OkLch are all in degrees. Always check when copying code across families."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:497-519
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:504-508
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "36 segments of Transforms.okhsvToColor(h, 1f, 1f), recomputed on each composition (no cache, but the call site is inside a remember)"
+  state: "Purely controlled, no internal state, both input and output 0..1."
+  m3: "No counterpart."
+
+OkHsvSaturationSlider:
+  summary: "OkHSV saturation slider; the gradient endpoints are computed from the actual OkHSV colors at s=0 and s=1 for the current hue, closer to the real result after dragging than the HSV version."
+  gotchas:
+    - text: "currentH is 0..1 (not degrees); currentS and the callback are also 0..1. The parameter names differ from HsvSaturationSlider (currentH/currentS vs currentHue/currentSaturation), so copying named arguments directly fails to compile."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:531-550
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:531-536
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "okhsvToColor(h,0,1) → okhsvToColor(h,1,1), value locked at 1"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkHsvValueSlider:
+  summary: "OkHSV value slider. Unlike HsvValueSlider, both endpoints are computed live by okhsvToColor (the v=0 end is not a hardcoded pure black)."
+  gotchas:
+    - text: "The parameter names are currentH / currentS / currentV (not currentHue / currentSaturation / currentValue), and all are 0..1."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:563-583
+    - text: "The gradient's left end okhsvToColor(h, s, 0f) takes exactly the v=0 0/0 branch, computing NaN which Compose folds into opaque black —— looks fine, but if you reuse Transforms.okhsvToColor yourself and inspect the return value, guard against NaN."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:246-254
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:563-569
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "okhsvToColor(h,s,0) → okhsvToColor(h,s,1)"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkHsvAlphaSlider:
+  summary: "OkHSV alpha slider, with a drawCheckerboard checkerboard base. It needs the three H/S/V side channels to compute the current color."
+  gotchas:
+    - text: "The parameter names are currentH / currentS / currentV / currentAlpha, all 0..1, all required with no defaults."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:597-607
+    - text: "The checkerboard color is a hardcoded light gray that doesn't follow the theme's light/dark, and can't be configured here."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:614-617
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:597-603
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "baseColor(alpha=0) → baseColor(alpha=1), with a 3.dp checkerboard underneath"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkLabColorPicker:
+  summary: "The implementation behind ColorPicker(colorSpace = ColorSpace.OKLAB), with three Cartesian sliders (L / a green-red axis / b blue-yellow axis) plus Alpha. Good for axis-oriented tuning like 'nudge a bit toward green', not for picking a hue. Note the OkLab it uses is not standard OkLab (see below)."
+  gotchas:
+    - text: "The OkLab on this path skips sRGB linearization and is not the same thing as standard OkLab. Transforms contains two transforms with identical coefficients: rgbToOkLab/okLabToRgb eat the gamma-encoded sRGB components directly, while the private linearSrgbToOklab/oklabToLinearSrgb are the correct versions that linearize first. Color.toOkLab(), OkLab.toColor(), and this Picker all take the former; the OkHSV panel takes the latter. How much they differ: #808080's standard OkLab L is 0.600, computed here as 0.795 (primary-color endpoints like #FF0000 happen to agree because 0/1 are fixed points of the transfer function; the midtones differ most). The consequence is that Color → OkLab → Color round-trips consistently and works functionally, but ① the L axis is not perceptually linear, and the value slider's midpoint is not perceptual mid-gray; ② the numbers you get don't match CSS oklab() / culori / any other implementation, so don't store them in a cross-platform data format."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:30-40
+    - text: "a/b have only two numeric scales, but the slider-track window is a third confusing number: the OkLab data class's a/b fields are a ±100 'human scale', converted to and from the internal ±0.4 absolute values via (v/0.4f)*100f; the Picker's internal state and OkLabAChannelSlider/OkLabBChannelSlider's inputs and callbacks all use the same ±0.4 internal values, and the Picker does no conversion when passing them to the sliders. (currentA+0.3f)/0.6f merely maps the internal value to a 0..1 position on the track, with the side effect that the track covers only ±0.3 and the callback output is also clamped within ±0.3. To assemble these sliders yourself, just distinguish the two numbers '±100 data class' and '±0.4 internal value', and don't add a conversion between state and slider."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:642-659
+    - text: "Out-of-gamut combinations get no gamut mapping and are hard-clipped per channel with coerceIn(0,1) inside okLabToRgb. Clipping changes both lightness and hue, so pushing a or b to extremes makes the displayed color 'turn a corner' rather than simply darken/desaturate. The file actually implements full cusp/gamut-boundary computation (findCusp/getSTMax), but uses it only on the OkHSV path."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:56-60
+    - text: "Same as ColorPicker: self-holding state + SideEffect weak sync; when the external side changes color back to the last synced value it won't roll back."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:661-676
+  visual:
+    layout: "Column spacedBy 12.dp: preview bar 26.dp (CircleShape) + four 26.dp sliders"
+    order: "L → a → b → Alpha"
+  state: "Same as ColorPicker. Internally it stores currentL (0..1), currentA / currentB (±0.4 internal scale, but the sliders only reach ±0.3), and currentAlpha (0..1)."
+  m3: "No counterpart."
+
+OkLabLightnessSlider:
+  summary: "OkLab lightness slider; the gradient uses 8 sample points (steps=7) to sweep L=0..1 at the current a/b."
+  gotchas:
+    - text: "currentL is 0..1, and currentA / currentB are the ±0.4 internal scale, not the OkLab data class's ±100 —— passing color.toOkLab().a in directly is off by 250×, turning the whole gradient into clipped dead colors. The values OkLabAChannelSlider/OkLabBChannelSlider give you in their callbacks are exactly this internal scale (just clamped within ±0.3) and can be passed straight through."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:985-1002
+    - text: "The L axis is not perceptually linear (see OkLabColorPicker's first item). The gradient has only 8 sample points with sRGB linear interpolation between them, so the gradient bar itself is only an approximation."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:30-40
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:985-991
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "8 sample points (steps=7), L from 0 to 1, a/b fixed"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkLabAChannelSlider:
+  summary: "OkLab a channel (green←→red) slider. The track covers a ∈ [-0.3, 0.3], with 9 sample points."
+  gotchas:
+    - text: "The track covers only ±0.3, while the OkLab data class allows ±0.4 and the a range actually reachable within sRGB is [-0.234, +0.276]. Although the a axis happens to fall within ±0.3, it shares the same set of constants as OkLabBChannelSlider, and the b axis does go out of bounds (see that item). Don't treat this slider's ±0.3 as OkLab a's domain."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1023-1044
+    - text: "Both currentA and onAChanged use the ±0.3 internal scale, not 0..1 and not the OkLab data class's ±100. Internally it converts to a slider position (currentA+0.3)/0.6 and computes back v*0.6-0.3 in the callback. Passing the wrong scale raises no error, it just sends the indicator ring outside the track."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1036-1040
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1016-1022
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "9 sample points (steps=8), a from -0.3 to +0.3, L and b fixed"
+  state: "Purely controlled, no internal state, both input and output the ±0.3 internal scale."
+  m3: "No counterpart."
+
+OkLabBChannelSlider:
+  summary: "OkLab b channel (blue←→yellow) slider, symmetric with the A channel, its track likewise covering only [-0.3, 0.3]."
+  gotchas:
+    - text: "The track's ±0.3 range can't fit sRGB's b axis: pure blue #0000FF has b = -0.3115 under this OkLab, below the slider's lower bound. There are two consequences —— ① when initializing OkLabColorPicker with Color.Blue, this slider's normalized value computes to -0.019 (negative, and SliderIndicator does no clamping), so the indicator ring hangs off the left end of the track; ② once you touch this slider, b is clamped into [-0.3, 0.3] and pure blue can never be dragged back."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1058-1075
+    - text: "currentB and onBChanged use the ±0.3 internal scale, same as the A channel."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1071-1075
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1051-1057
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "9 sample points (steps=8), b from -0.3 to +0.3, L and a fixed"
+  state: "Purely controlled, no internal state, both input and output the ±0.3 internal scale."
+  m3: "No counterpart."
+
+OkLabAlphaSlider:
+  summary: "OkLab alpha slider, with a checkerboard base. It needs the three L/a/b side channels to compute the base color."
+  gotchas:
+    - text: "currentL is 0..1, currentA / currentB are the ±0.4 internal scale (internally converted back to the OkLab data class's ±100 via (v/0.4f)*100f), and currentAlpha is 0..1. Three scales in the same parameter list."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1094-1101
+    - text: "The checkerboard color is a hardcoded light gray that doesn't follow the theme's light/dark, and can't be configured here."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1107-1108
+    - text: "No modifier parameter, size hardcoded; only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1086-1092
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "baseColor(alpha=0) → baseColor(alpha=1), with a 3.dp checkerboard underneath"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkLchColorPicker:
+  summary: "The implementation behind ColorPicker(colorSpace = ColorSpace.OKLCH), the polar form of OkLab: lightness / chroma / hue / alpha. Use this when you want to 'keep lightness fixed and only change hue'; it is the handiest of the four spaces for deriving theme colors. The slider order is H → L → C → A, different from the other three spaces."
+  gotchas:
+    - text: "The underlying OkLab likewise skips sRGB linearization (sharing colorToOkLab/okLabToRgb with OkLabColorPicker), so the L and C here are not standard OkLch values and don't match CSS oklch(). Don't store the result of Color.toOkLch() as interoperable numbers."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:30-40
+    - text: "The chroma cap is hardcoded to 0.4, but the maximum chroma actually reachable in sRGB is only about 0.3225 (at pure magenta). That means the rightmost ~19% of the chroma slider's travel is entirely out of gamut, and dragging into it only triggers per-channel clipping —— the color no longer gets more vivid, and instead the lightness and hue both distort."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:483-490
+    - text: "Same as ColorPicker: self-holding state + SideEffect weak sync; when the external side changes color back to the last synced value it won't roll back."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:791-806
+    - text: "The slider order has hue on top, then lightness, then chroma, unlike HSV/OkHSV's H→S→V and OkLab's L→a→b. When building a UI with four tabs side by side, the row positions don't line up."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:830-877
+  visual:
+    layout: "Column spacedBy 12.dp: preview bar 26.dp (CircleShape) + four 26.dp sliders"
+    order: "H → L → C → Alpha"
+  state: "Same as ColorPicker. All three internal channels are normalized to 0..1: currentL is L/100, currentC is the chroma as a fraction of 0.4, and currentH is angle/360. Note these are three different numbers from the OkLch data class (l 0..100, c 0..100, h 0..360 degrees)."
+  m3: "No counterpart."
+
+OkLchLightnessSlider:
+  summary: "OkLch lightness slider; the gradient is a two-point linear gradient of L from 0 to 1 at the current chroma/hue."
+  gotchas:
+    - text: "All three inputs are 0..1: currentL is the lightness fraction, currentC is the chroma as a fraction of 0.4 (not the 0..0.4 absolute value; internally it multiplies by 0.4), and currentH is the hue as a fraction of 360° (not degrees). None of the OkLch data class's three fields (0..100 / 0..100 / 0..360) can be passed in directly."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:882-905
+    - text: "The gradient has only two endpoints (L=0 and L=1) with sRGB linear interpolation, not OkLch interpolation, in between, so the color in the middle of the gradient bar doesn't match the color you actually get by dragging to that position (the chroma comes out lower)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:891-896
+    - text: "None of the OkLch family's four sliders have KDoc (unlike the Hsv/OkHsv families), and none have a modifier parameter; the size is hardcoded, and there is only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:881-888
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "two-point gradient oklchToColor(0, c*0.4, h*360) → oklchToColor(1, c*0.4, h*360)"
+  state: "Purely controlled, no internal state, the three inputs and the callback are all 0..1."
+  m3: "No counterpart."
+
+OkLchChromaSlider:
+  summary: "OkLch chroma slider, a two-point gradient from gray (C=0) to C=0.4."
+  gotchas:
+    - text: "currentL / currentC / currentH are all 0..1 (currentH is a fraction, not degrees). The onChromaChanged callback also gives a 0..1 fraction, not the 0..0.4 absolute chroma."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:907-929
+    - text: "The right endpoint uses an absolute chroma of 0.4, beyond sRGB's reachable ~0.3225, so the rightmost segment of the track's gradient is already clipped color, and dragging to the end may look about the same as dragging to 80%."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:916-921
+    - text: "No KDoc, no modifier parameter, size hardcoded, only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:907-914
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "two-point gradient oklchToColor(L, 0, h*360) → oklchToColor(L, 0.4, h*360)"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkLchHueSlider:
+  summary: "OkLch hue slider; its background sweeps 36 hue sample points at the current lightness/chroma —— so its rainbow bar varies with L and C, and at low chroma the whole bar approaches gray. The only slider in the whole set with a global cache."
+  gotchas:
+    - text: "currentH is a 0..1 fraction (not degrees), and currentL / currentC are also 0..1. The callback is likewise 0..1."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:932-950
+    - text: "The background is generated by Transforms.generateOkLchHueColors, a public function that internally carries a never-cleared, non-thread-safe global mutableMapOf cache, keyed on a string built from L and C each multiplied by 100 and rounded. Dragging the L/C sliders keeps stuffing entries in (upper bound about 101×101 combinations × 36 Colors). Of the three hue-generation functions only this one added a cache; the other two recompute every time."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:461-481
+    - text: "The cache key quantizes L and C to 1/100, so while dragging L/C the hue bar's background changes in discrete steps (only every time it crosses 1%), not as a continuous transition."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:470-478
+    - text: "No KDoc, no modifier parameter, size hardcoded, only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:932-939
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "36 segments of oklchToColor(L, C*0.4, i/36*360), varying with the current L/C"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+OkLchAlphaSlider:
+  summary: "OkLch alpha slider, with a checkerboard base; the base color is computed from the three L/C/H side channels."
+  gotchas:
+    - text: "currentL / currentC / currentH are all 0..1 (currentC is a fraction of 0.4, currentH is a fraction of 360°, and internally it multiplies by the coefficients itself)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:953-968
+    - text: "The transparent end is reconstructed with Color(r,g,b,0f) rather than baseColor.copy(alpha=0f) —— the two are equivalent here, but it's inconsistent with the other three families' style, so don't assume it has any special meaning when editing the code."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:964-968
+    - text: "The checkerboard color is a hardcoded light gray that doesn't follow the theme's light/dark; no KDoc, no modifier parameter, size hardcoded, only a drag gesture, no tap gesture."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:970-978
+  visual:
+    size: "fillMaxWidth × 26.dp (fixed)"
+    track: "transparent → opaque current OkLch color, with a 3.dp checkerboard underneath"
+  state: "Purely controlled, no internal state."
+  m3: "No counterpart."
+
+Modifier.drawCheckerboard:
+  summary: "A top-level public Modifier extension that draws a 'transparency' checkerboard behind the node; it's what the four Alpha sliders use. Zero documentation coverage, but it is the only part in this set that can be reused independently on your own components —— to back your own transparent-color preview block with a checkerboard, use it directly, don't write your own. It lives in the top.yukonga.miuix.kmp.basic package (the file is ColorPicker.kt)."
+  gotchas:
+    - text: "It first lays down an opaque lightColor full-area rectangle and then overlays the dark cells, so it covers up earlier drawBehind content in the chain. It must be placed before the gradient/content drawing (closer to the head of the chain), and it doesn't clip itself —— when used alone you must clip first, or the checkerboard fills the whole node's bounding box rather than the rounded interior."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1141-1144
+    - text: "The default colors #CCCCCC / #AAAAAA are hardcoded light gray and don't read the theme. In a dark theme you must explicitly pass lightColor / darkColor, or it will be a glaring bright-gray block."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1113-1116
+    - text: "The cells are constructed all at once as a single Path inside drawWithCache, with a rectangle count of about area/(2×cell²). The default 3.dp cell is designed for a 26.dp-tall slider bar; spread over a full-screen-sized area it builds a Path of tens of thousands of rectangles (though it only rebuilds when the size/density changes). For large areas, increase cellSizeDp."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1118-1139
+    - text: "cellSizeDp is coerceAtLeast(1f)'d to at least 1 physical pixel, so passing 0.dp won't infinite-loop, but on low-density devices 1.dp and 0.5.dp render as the same 1px cell."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ColorPicker.kt:1119
+  visual:
+    cell: "cellSizeDp default 3.dp (clamped to a minimum of 1px)"
+    colors: "lightColor default Color(0xFFCCCCCC), darkColor default Color(0xFFAAAAAA), both hardcoded and theme-independent"
+    order: "even rows start drawing dark from the 2nd cell, odd rows from the 1st cell (a standard checkerboard); the dark cells are drawn with a single drawPath on one Path"
+  state: "Stateless, a pure drawing modifier. It draws in the onDrawBehind phase (beneath the content)."
+  m3: "No counterpart. Neither Compose proper nor material3 has a checkerboard modifier; the usual approach is to write your own drawBehind or use a ShaderBrush + TileMode.Repeated bitmap shader —— the latter is much faster than this Path implementation over large areas."

@@ -1,0 +1,708 @@
+# Structure and container components (Scaffold / top bar / navigation bars / scroll containers / feedback layers)
+
+Scaffold:
+  summary: "The library's only page-root container. It uses SubcomposeLayout to hand-place 7 slots (topBar / bottomBar / fab / floatingToolbar / snackbarHost / popupHost / content), and it is also the host for all Overlay* popups and dialogs. Any page that uses an Overlay-family component must wrap a layer of it."
+  gotchas:
+    - text: "The two host slots have asymmetric defaults: popupHost already mounts MiuixPopupHost() by default so popups work out of the box, whereas snackbarHost defaults to an empty lambda `{}`. Following intuition and only writing `SnackbarHostState()` + `showSnackbar()` makes nothing appear — you must explicitly write `snackbarHost = { SnackbarHost(state = snackbarHostState) }`. Worse, showSnackbar is suspend and completes via a timer inside SnackbarHost; with no host mounted that coroutine suspends forever and entries pile up in the state."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:87"
+    - text: "The PaddingValues that the content lambda receives do not take effect automatically. Scaffold measures content with looseConstraints and place(0, 0), i.e. content fills the whole screen and sits directly under topBar. You must apply `Modifier.padding(paddingValues)` yourself (or convert the top value into a LazyColumn's contentPadding). Omitting it will definitely be obscured when there is a topBar."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:351"
+    - text: "The content PaddingValues are computed only from topBar height / bottomBar height / contentWindowInsets; FAB and floatingToolbar do not participate at all. If you assume \"adding padding means it won't be covered,\" the bottom will still be covered by the FAB or the floating toolbar, and you need to add extra bottom spacing yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:325"
+    - text: "The available height for floatingToolbar is `layoutHeight - topBar height - topInset - bottomInset`, and only the bottomBar height is not subtracted. So a floating toolbar in a bottom position such as BottomCenter will sit directly on top of the NavigationBar (the FAB has dedicated avoidance logic). To have both coexist you must add bottom padding to the floatingToolbar yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:282"
+    - text: "The floatingToolbar's y coordinate is written as `topBarPlaceable.height + topInset + position.y - 4dp`, but TopAppBar/SmallTopAppBar already carry status-bar padding internally, so their height already includes topInset — which amounts to counting the status-bar height twice. BottomStart/BottomCenter/BottomEnd work out correctly because position.y carries a negative sign that cancels it out; the Top* and Center* positions shift down by about one status-bar height, and are also unconditionally pushed up 4dp into the topBar. Correct non-bottom positions yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:290"
+    - text: "Scaffold passes no insets to topBar / bottomBar — the contract is \"each bar handles its own side.\" So a custom bar must write its own windowInsetsPadding, otherwise it will be crushed under the status bar / gesture bar; and Scaffold's contentWindowInsets is no longer added to content when a bar is present."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:69"
+    - text: "When Scaffolds are nested, each level news up its own popup/dialog list, but at the same time passes the outermost one through as LocalRootPopupStates/LocalRootDialogStates; and the renderInRootScaffold of Overlay* components defaults to true. The result is \"a dialog popped inside an inner Scaffold renders into the outermost Scaffold\" — to confine it to the inner one you must explicitly pass renderInRootScaffold = false."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:176"
+  visual:
+    fab_spacing: "12.dp (spacing between the FAB and bottomBar / screen bottom; a private constant, not configurable)"
+    floating_toolbar_spacing: "4.dp (spacing between the floating toolbar and the bottom edge; a private constant, not configurable)"
+    container_color: "MiuixTheme.colorScheme.surface"
+    content_window_insets: "WindowInsets.systemBars ∪ WindowInsets.displayCutout"
+  state: "Stateless itself. snackbarHostState / the topAppBar's ScrollBehavior / the various selectedIndex are all remembered by the caller and passed into the slots. The only thing it holds is the popup/dialog list (a remembered mutableStateListOf, tied to the Scaffold lifecycle), dispatched down via 4 CompositionLocals. The PaddingValues passed to content is a mutable object whose identity never changes; value changes only trigger a re-measure of the nodes that read it and do not recompose content."
+  m3: "Corresponds to androidx.compose.material3.Scaffold, with much of the implementation copied line by line from upstream (including the explicit copy of MutableWindowInsets). Differences: it adds the two extra slot groups floatingToolbar + floatingToolbarPosition and popupHost; FabPosition has an extra EndOverlay position (ignores bottomBar and covers it directly); snackbarHost defaults to empty (M3 is also empty, but nearly every tutorial in the M3 ecosystem writes one in, and the Miuix docs once claimed \"no SnackbarHost is provided,\" which was misleading); no M3 contentColor parameter."
+
+TopAppBar:
+  summary: "A MIUI-style collapsible large-title bar — when expanded it shows a large-font largeTitle, and as content scrolls up it collapses into a 52dp-tall small title bar. Use it when you want the collapse effect; use SmallTopAppBar for a fixed height."
+  gotchas:
+    - text: "Just passing scrollBehavior to TopAppBar will not collapse it. You must also attach `Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)` to the scrolling content (LazyColumn / verticalScroll container) so the collapse amount has a source."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:451"
+    - text: "`defaultWindowInsetsPadding = false` only turns off the left and right sides (the Horizontal of displayCutout + navigationBars); the top `systemBars.only(Top)` padding is written outside the if and takes effect unconditionally. Fully taking over the status-bar height yourself is impossible; you can only accept this padding instead."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:806"
+    - text: "The large title's fade-out endpoint is at 1/3 of the collapse progress (`1f - (frac * 3f).coerceIn(0,1)`), and the small title's appearance threshold is also 1/3 (`collapsedFraction * 3f >= 1f`). That is, by the time you scroll one third of the way the title switch is already complete, and only the height changes over the remaining two thirds. To \"keep the large title visible the whole time\" you need to enlarge the largeTitle's height yourself rather than tweak the animation."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:650"
+    - text: "The `translationY` offset used when the small title fades in is hard-coded to 20f, and graphicsLayer's translationY unit is pixels, not dp. On a 3x-density screen the physical displacement is only one third of a 1x screen, so on high-density devices this animation is barely noticeable."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:684"
+    - text: "The collapse limit heightOffsetLimit is written by the inner large-title Column's onSizeChanged, and it is a plain var, not snapshot state (changing it alone triggers no re-measure). Before the height is measured on the first frame this value is the initial -Float.MAX_VALUE, at which point collapsedFraction = heightOffset / -Float.MAX_VALUE is nearly always 0 (not NaN; the isNaN fallback in the measure lambda at TopAppBar.kt:867 guards heightOffset itself, not collapsedFraction). Don't read collapsedFraction on the first frame to make business decisions."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:758"
+  visual:
+    collapsed_height: "52.dp (TopAppBarDefaults.CollapsedHeight, the bar height after collapse)"
+    title_padding: "26.dp (horizontal inner padding of the title and large title)"
+    navigation_icon_padding: "16.dp"
+    action_icon_padding: "16.dp"
+    large_title_bottom_padding: "4.dp (when there is no subtitle); with a subtitle it switches to SubtitleBottomPadding = 8.dp"
+    title_max_width: "90% of the available width (total width minus the navigation icon and action area); a private constant TITLE_WIDTH_FRACTION, not configurable"
+    small_title_anim: "show folmeSpring(damping=1.0, response=0.3), hide response=0.15 (hide is twice as fast as show)"
+  state: "A purely controlled shell + an externally hosted TopAppBarState. scrollBehavior is nullable (not passing it means a non-collapsing fixed large-title bar). During scrolling all state reads are sunk into the layout/draw phase (closures + Modifier.offset{} / graphicsLayer{} / measure lambda), so 60fps scrolling produces no recomposition; the only thing that recomposes is the derivedStateOf<Boolean> for the small title's show/hide, which flips only once or twice per scroll."
+  m3: "Corresponds to material3's LargeTopAppBar / TopAppBar family, but the semantics differ. M3's TopAppBar is a single \"title + navigation + actions\" form and switches behavior via the three implementations of TopAppBarScrollBehavior (pinned/enterAlways/exitUntilCollapsed); Miuix has only one exitUntilCollapsed behavior (ScrollBehavior.isPinned is always false), merges the large/small titles into the same component, and additionally provides subtitle and bottomContent slots. M3's colors/windowInsets parameters are split here into color/titleColor/largeTitleColor/subtitleColor and a boolean switch defaultWindowInsetsPadding."
+
+SmallTopAppBar:
+  summary: "A fixed 52dp-tall small title bar with vertically centered content. Use it for wide screens, secondary pages, or when you don't need large-title collapse."
+  gotchas:
+    - text: "Although the parameters include scrollBehavior, it never collapses. The moment the component enters composition it uses SideEffect to set pinnedBySmallTopAppBar to true and zeroes out both heightOffsetLimit and heightOffset, so the collapse range is squashed to 0. Moreover scrollBehavior is never passed down to SmallTopAppBarLayout (TopAppBar.kt:213-227); there is no alpha animation in the layout, the small title is always visible and there is no fade-in. The only real use of passing scrollBehavior is to share the same behavior/state with a TopAppBar: it preserves contentOffset when switching between wide/narrow screens, so that switching back to TopAppBar lands directly on the correct collapse state. Expecting it to collapse per the TopAppBar docs is wrong."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:189"
+    - text: "Switching the same ScrollBehavior between SmallTopAppBar and TopAppBar (wide/narrow-screen adaptation) is specifically supported: when switching back to TopAppBar it uses contentOffset to judge whether the content has already scrolled down and lands directly on fully collapsed or fully expanded, avoiding a sudden pop of the large title. Conversely, sharing one ScrollBehavior between two TopAppBars is undefined; don't do that."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:653"
+    - text: "As with TopAppBar, the top `systemBars.only(Top)` padding still takes effect when defaultWindowInsetsPadding = false."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:1031"
+  visual:
+    bar_height: "52.dp (TopAppBarDefaults.CollapsedHeight)"
+    content_vertical_center: "the baseline is SmallTopAppBarCenterHeight / 2 = 25.dp, 1dp higher than the geometric center of 52dp — this is deliberate visual balancing, not a typo"
+    subtitle_bottom_padding: "8.dp"
+  state: "Shares TopAppBarState with TopAppBar. It only writes, never reads: a SideEffect one-directionally pins the state. The small title's show/hide is judged under the pinned branch using `contentOffset < 0f` (because collapsedFraction is always 0 when limit==0)."
+  m3: "Corresponds to material3.TopAppBar (CenterAlignedTopAppBar is semantically closer, since the title is centered and clamped by the navigation/action icons). M3 uses `TopAppBarDefaults.pinnedScrollBehavior()` to express \"no collapse,\" whereas Miuix flattens the state within the component itself, so whether it is pinned is determined by which component you use, not by the behavior."
+
+MiuixScrollBehavior:
+  summary: "The factory for TopAppBar collapse behavior; it returns a ScrollBehavior carrying a nestedScrollConnection. To collapse the title bar, first call it in composition, then pass the state to the bar and attach the connection to the content."
+  gotchas:
+    - text: "The name is upper camel case and looks like a constructor or object, but it is actually a @Composable function (the source uses @Suppress(\"ComposableNaming\") to silence the naming warning). It cannot be written as a top-level val, nor called inside remember{} / LaunchedEffect; it must be called directly in composition scope."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:249"
+    - text: "In the sole implementation it returns, isPinned is always false, and there is no second ScrollBehavior in the library. Although the ScrollBehavior interface exposes an isPinned member, the whole repository has no read site for it — to \"pin\" you can only switch to SmallTopAppBar; there is no counterpart such as pinnedScrollBehavior."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:480"
+  visual:
+    snap_spec: "spring(stiffness = 2500f) (the default snap stiffness is very high, nearly an instant return to place; this is the MIUI feel rather than Material's slow spring-back)"
+    settle_threshold: "collapsedFraction < 0.5f springs back to expanded, otherwise collapses fully"
+  state: "Each call remembers by the four-tuple (state, canScroll, snapAnimationSpec, flingAnimationSpec). state defaults to rememberTopAppBarState() (rememberSaveable, surviving configuration changes and process death). canScroll is a closure called in real time on every scroll, usable to forbid collapse under certain conditions."
+  m3: "Corresponds to TopAppBarDefaults.exitUntilCollapsedScrollBehavior(). M3 provides three — pinned / enterAlways / exitUntilCollapsed; Miuix has only this one, and the factory function name carries neither a remember prefix nor a Defaults ownership."
+
+rememberTopAppBarState:
+  summary: "Creates and remembers a TopAppBarState (collapse limit, current collapse amount, cumulative content scroll amount). Normally you don't call it directly, since MiuixScrollBehavior's default parameter already does; call it explicitly only when you need to share it across components or read the collapse progress."
+  gotchas:
+    - text: "The default of initialHeightOffsetLimit is -Float.MAX_VALUE rather than 0. Before the large title's measured height is written in, collapsedFraction's denominator is this huge negative number and the ratio is almost always 0; don't treat the collapsedFraction read on the first frame as the real state."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:276"
+    - text: "The overlappedFraction property exposed on TopAppBarState has no read site anywhere in the repository, and no component changes its appearance based on it. It is not a usable signal for \"whether content covers the bar\"; don't use it for visual judgments as the KDoc describes."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt:356"
+  visual: {}
+  state: "rememberSaveable + listSaver, saving 4 values (limit / offset / contentOffset / pinnedBySmallTopAppBar); restore is backward-compatible with the old 3-element list. Note that heightOffsetLimit is a plain var, not snapshot state (changing it alone triggers no re-measure), while heightOffset is a mutableFloatStateOf whose setter does coerceIn(limit, 0f)."
+  m3: "Corresponds to material3.rememberTopAppBarState, with basically identical parameters and semantics; Miuix adds one internal pinnedBySmallTopAppBar field used for wide/narrow-screen switching."
+
+NavigationBar:
+  summary: "A bottom navigation bar with a slot-based API (you place NavigationBarItems inside content yourself), with a divider and bottom system-bar spacing. Put it in the Scaffold's bottomBar."
+  gotchas:
+    - text: "It has no parameters like items / selected / onClick (such examples in the docs are wrong and won't compile). The only signature is slot-based: `NavigationBar { items.forEachIndexed { i, item -> NavigationBarItem(selected = ..., onClick = ..., icon = ..., label = ...) } }`, where content is a required trailing lambda."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:74"
+    - text: "It doesn't handle horizontal window insets at all (TopAppBar handles the Horizontal of displayCutout/navigationBars, NavigationRail handles Start, only this one doesn't). In landscape + notch screens the outermost items get clipped; the caller must add windowInsetsPadding on the modifier."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:109"
+    - text: "On iOS the bottom spacing is hard-coded to 20.dp (it does not read WindowInsets.navigationBars), because that inset is unreliable for CMP on iOS. On an iPad or a device without a Home Indicator you get the same 20dp gap, which you can only turn off with defaultWindowInsetsPadding = false and then add your own."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:113"
+    - text: "The display mode (IconAndText / IconOnly / IconWithSelectedLabel) is dispatched to the item via CompositionLocal, so there is no mode parameter on the item. If you place a NavigationBarItem outside NavigationBar (or under a separate CompositionLocalProvider layer), you get the default IconAndText."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:105"
+  visual:
+    item_height: "64.dp"
+    icon_size: "26.dp"
+    label_font_size: "12.sp"
+    icon_top_padding: "8.dp (selected state; when unselected in IconWithSelectedLabel it changes to (64-26)/2 = 19.dp, centered)"
+    label_bottom_padding: "8.dp"
+    caption_bar_anim: "when entering/leaving split-screen / freeform window, the captionBar height transitions with tween(300ms) to avoid an inset-jump flicker"
+  state: "Purely controlled, zero state. The selected state is driven entirely by the caller's selected: Boolean + onClick; the component knows nothing about routing (miuix-nav is an independent module with no code dependency here). mode is dispatched down one-directionally via LocalNavigationBarDisplayMode."
+  m3: "Corresponds to material3.NavigationBar. Differences: M3's NavigationBarItem has label/alwaysShowLabel/colors etc.; Miuix expresses the same thing with a three-way mode enum + CompositionLocal; M3 has a windowInsets parameter accepting any WindowInsets, while Miuix only has a boolean switch and no horizontal direction; M3's item has an indicator pill background, while Miuix's bottom-bar item has no indicator (it distinguishes only by color alpha)."
+
+NavigationBarItem:
+  summary: "A single item of the bottom navigation bar, icon + text, with badge support. Can only be placed inside NavigationBar."
+  gotchas:
+    - text: "It is an extension function on `RowScope` (internally using weight(1f) to split the width evenly). Placing it in a Column, Box, or any non-RowScope scope fails to compile directly; and the identically named FloatingNavigationBarItem is a plain function — the two are not interchangeable."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:145"
+    - text: "The selected/pressed colors are `original color.alpha * factor` multiplied rather than replaced (unselected 0.4, unselected-pressed 0.6, selected-pressed 0.5). Passing Color.Transparent stays fully transparent, and passing a semi-transparent color multiplies once more on top of it — for \"grey when unselected, blue when selected\" you can't rely on colors alone; you must pass two different color values."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:498"
+    - text: "indication is explicitly set to null, so there is no ripple feedback; press feedback relies entirely on the alpha multiplication above. This is the deliberate MIUI look, but it means LocalIndication has no effect here."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:173"
+    - text: "The morph in IconWithSelectedLabel mode uses `by animateDpAsState` / `by animateFloatAsState`, but both reads are sunk outside composition: iconTopPadding is read inside the measure lambda of `Modifier.layout{}` (NavigationBar.kt:219), and textAlpha inside `graphicsLayer{}` (NavigationBar.kt:237). So this 300ms animation only re-measures/redraws and does not recompose the item every frame. What actually reads the progress in composition is the label leaf of NavigationRailItem (font size is a composition-time parameter of Text and cannot be sunk)."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:205"
+  visual:
+    icon_size: "26.dp"
+    label_font_size: "12.sp, bold when selected (FontWeight.Bold), Normal when unselected"
+    alpha: "unselected 0.4 / unselected-pressed 0.6 / selected-pressed 0.5 / selected 1.0 (all multiplied with the original color's alpha)"
+    morph_duration: "300ms tween (in IconWithSelectedLabel mode the icon moves up + the text fades in)"
+  state: "Purely controlled. Both selected and onClick are required; there is no internal selected state. interactionSource is built internally and cannot be passed in from outside."
+  m3: "Corresponds to material3.NavigationBarItem. That M3's is also a RowScope extension is the same; the differences are that M3 has alwaysShowLabel, an indicator pill, and a configurable NavigationBarItemColors with 6 color slots, while Miuix has only two base colors + fixed alpha factors and no indicator."
+
+NavigationRail:
+  summary: "A side navigation bar, for wide screens. Since 0.9.4 it is one of two overloads: `NavigationRail(expanded = …)` is a fixed layout (collapsed = the classic vertical stack with icon above and text below, expanded = a pill list with icon in front and text after, no toggle button, no animation); `NavigationRail(state = rememberNavigationRailState())` is a switchable layout (a built-in expand/collapse button at the top, with a continuous morph animation between the two layouts). Passing nothing means fixed collapsed."
+  gotchas:
+    - text: "0.9.4 is a breaking change: the original single `NavigationRail(modifier, state: NavigationRailState? = null, …)` was split into `NavigationRail(modifier, expanded: Boolean = false, …)` and `NavigationRail(state: NavigationRailState, modifier, …)`, with state becoming non-null and moved to first position. The old forms `NavigationRail(state = null)`, `NavigationRail(state = if (wide) railState else null)`, and the positional `NavigationRail(Modifier.x, railState)` all fail to compile on 0.9.4 because no matching overload exists (it does not silently fall through to the other overload); the named-parameter form `NavigationRail(modifier = m, state = railState)` still compiles. Migration: change nullable state to always passing a non-null state, and drive wide/narrow screens with expand()/collapse(); change places that passed null to omitting it or writing `expanded = false`. Conversely, `expanded = …` written for 0.9.4 also fails to compile on 0.9.4-rc01 and earlier."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:143"
+    - text: "The two overloads have asymmetric capabilities: the expand/collapse button and the morph animation belong only to the state overload, and as soon as you use the state overload the button always appears — no parameter can hide it; the expanded overload never has a button, and when expanded flips, the width and item layout jump within one frame (the progress is a `remember(expanded) { mutableStateOf(0f/1f) }` constant, not an animation). So \"animation but no built-in button\" is impossible with either overload; for \"auto-expand on wide screens with animation\" you must use the state overload + call expand()/collapse() yourself in a LaunchedEffect."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:196-204"
+    - text: "expandContentDescription / collapseContentDescription exist only on the state overload (the expanded overload has no button and naturally lacks these two parameters); passing them to the expanded overload fails to compile. The defaults are hard-coded English \"Expand navigation rail\" / \"Collapse navigation rail\"; when using the state overload and needing localization you must pass them explicitly."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:151-152"
+    - text: "The library has no breakpoints or adaptive logic; whether it expands comes only from the caller's state or expanded (the sample app itself uses width >= 1200.dp). And although miuix-ui declares a dependency on material3-window-size-class, no line of Kotlin in the whole repository uses WindowSizeClass — don't expect the library to provide WindowSizeClass integration."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:190"
+    - text: "When expandedWidth is smaller than minWidth it is silently corrected to minWidth via coerceAtLeast (expanded equals not expanded, without an error). Also, changing minWidth away from the default 80.dp breaks a deliberately tuned numeric coincidence: the collapsed-state icon center (80-28)/2 = 26dp exactly equals the expanded state's 12dp outer margin + 14dp inner padding, so under the default parameters the X coordinates of the state overload's icon and toggle button stay perfectly still throughout the animation; after changing minWidth they drift left and right during expansion."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:192"
+    - text: "The insets order of the inner scroll column is deliberate: statusBars.only(Top) is outside verticalScroll (the top spacing stays fixed and doesn't scroll), navigationBars.only(Bottom) is inside verticalScroll (the bottom spacing scrolls with the content to the end). The background color is also deliberately drawn before the insets padding, so the rail's color spreads under the side notch. Changing the order of these lines produces visible visual bugs."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:242-244"
+  visual:
+    collapsed_width: "80.dp (MinWidth)"
+    expanded_width: "240.dp (ExpandedWidth)"
+    icon_size: "28.dp"
+    label_font_size: "collapsed 12.sp → expanded 16.sp (the state overload interpolates; the expanded overload takes one of the two ends directly)"
+    expanded_pill: "corner radius 16.dp, left/right outer margin 12.dp, inner padding 14.dp, icon-to-text spacing 16.dp"
+    vertical_padding: "24.dp (top and bottom of content), HeaderSpacing 24.dp (after the expand button/header)"
+    expand_content_description: "only the state overload has this parameter; the defaults are hard-coded English \"Expand navigation rail\" / \"Collapse navigation rail\"; for localization you must pass it explicitly"
+  state: "The expanded overload is stateless: expanded is passed directly by the caller, and internally it only remembers a constant progress, flipping means an instant jump. The state overload's state is hosted by the caller's rememberNavigationRailState() (non-null, required); the expand animation is driven by a single State<Float> timeline, and it deliberately does not destructure with `by` — progress is passed to the item as a State<Float> via CompositionLocal and its .value is read only inside Modifier.layout{} and the measure lambda, so spring frames only re-measure and don't recompose. The sole composition-time read is isolated in the label leaf (font size is a composition-time parameter of Text and cannot be sunk)."
+  m3: "Corresponds to material3.NavigationRail (and M3 expressive's WideNavigationRail). M3 expresses the narrow/wide forms with two separate components; Miuix uses two identically named overloads: the expanded boolean overload gives static narrow/wide layouts, and the state overload does a continuous morph animation between them; that M3 has a header slot is the same; M3's windowInsets parameter degenerates here into a boolean switch."
+
+NavigationRailItem:
+  summary: "An item of the side navigation bar. In a state-overload rail it continuously morphs with the expand progress between \"icon above, text below\" and \"a pill with icon in front, text after\"; in the expanded overload it is fixed to one of these."
+  gotchas:
+    - text: "The selected state is expressed only by a surfaceContainerHigh squircle behind the icon: tint is unconditionally onSurfaceContainer and fontWeight is unconditionally Medium; neither the icon/text color nor the weight changes with selected. Since 0.9.4 the collapsed (classic) layout also draws this background hugging the icon (14.dp left/right, 4.dp top/bottom); in 0.9.4-rc01 and earlier the classic rail (state == null) had no visual effect for selected at all — only the expandable rail drew the pill. On older versions you must wrap your own background to show selection; after upgrading to 0.9.4 you must delete that homemade background to avoid stacking two layers."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:383-387"
+    - text: "It has no colors parameter (NavigationBarItem does). All colors come from the theme's onSurfaceContainer / surfaceContainerHigh; to change them you can only swap the theme."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:340-341"
+    - text: "The two layout paths attach indication differently: the classic path (the fixed layout with expanded = false) attaches it on selectable (the whole item has a ripple); the morph path (state overload, or expanded = true) sets selectable's indication to null and instead attaches it on the indicator Box (the ripple only follows the icon/pill). So the same LocalIndication has a different visual scope in the two forms."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:477"
+    - text: "Since 0.9.4 the padding wrapping the icon on the classic path (expanded = false) (14.dp left/right, 4.dp top/bottom) is unconditional, with only the background looking at selected: so an unselected item is also 8.dp taller than in 0.9.4-rc01, and the icon area grows from 28.dp wide to 56.dp wide. When upgrading from an older version, adjacent content aligned to the old dimensions will be misaligned, and a column of items will overflow its height and start scrolling earlier; the classic item in 0.9.4-rc01 and earlier had no such padding."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:392-395"
+  visual:
+    icon_size: "28.dp"
+    collapsed_label: "12.sp; the icon is wrapped in a layer of padding (14.dp left/right, 4.dp top/bottom, regardless of selection; the classic path also has it since 0.9.4), the icon block is 56×36.dp; IconTextSpacing 4.dp is added between the icon block and the text, so the visual gap from the icon's bottom edge to the text is 8.dp (the morph path's collapsed state is likewise 8.dp); item top/bottom padding 12.dp (icon top edge to item top 16.dp)"
+    expanded_label: "16.sp, overlong text uses TextOverflow.Ellipsis (no hard clip)"
+    indicator: "a surfaceContainerHigh squircle with 16.dp corner radius; when collapsed it hugs the icon at 14.dp left/right, 4.dp top/bottom (the classic path also draws it since 0.9.4); when expanded it grows into a full pill (14.dp top/bottom)"
+  state: "Purely controlled (selected + onClick). Whether it takes the morph path is decided by whether LocalNavigationRailExpandInfo is null: non-null when the rail uses the state overload or expanded = true, null taking the classic Column path when expanded = false; the item itself does not know the rail's state object. All geometry is interpolated by float in the measure lambda and each coordinate is rounded only once (to avoid odd/even rounding jitter between adjacent frames)."
+  m3: "Corresponds to material3.NavigationRailItem. M3's item has alwaysShowLabel, an indicator pill, and a full NavigationRailItemColors; Miuix uses a single fixed-color squircle to indicate selection in both forms, the icon/text color does not change with selection, and the colors are not configurable."
+
+rememberNavigationRailState:
+  summary: "Creates and remembers the side bar's expanded/collapsed state. Only NavigationRail's state overload accepts it (non-null, required); once passed the rail gets a built-in toggle button and an expand animation."
+  gotchas:
+    - text: "currentValue is private set and can only be modified via expand() / collapse() / toggle(); it cannot be assigned directly."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:694"
+    - text: "\"Auto-expand on wide screens\" must be written yourself: something like `LaunchedEffect(isWide) { if (isWide) state.expand() else state.collapse() }` (when you don't need the button and animation you can also just use `NavigationRail(expanded = isWide)`). Don't use if/else on width to switch between the state overload and the expanded overload — those are two different call sites, and state such as the rail's scroll position will be rebuilt with no animation; likewise, for wide/narrow-screen adaptation keep the navigation host at the same composition position, since placing a route container in each of the two if/else branches will rebuild the current route."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:731"
+  visual: {}
+  state: "rememberSaveable + a Saver that stores the enum as its ordinal, surviving configuration changes and process death. The public NavigationRailState.Saver can be dropped into a custom listSaver/mapSaver. The expand animation is derived declaratively by the rail from currentValue, so changing the state makes it animate with no extra call needed."
+  m3: "No counterpart. M3's NavigationRail has no state object and switches the wide/narrow form by swapping components; WideNavigationRail's expanded state in M3 is WideNavigationRailState / rememberWideNavigationRailState (expressive, still experimental), which is semantically close but has a different API."
+
+FloatingNavigationBar:
+  summary: "A capsule-shaped bottom navigation bar floating above content (50dp corner radius, with a shadow and an optional outline). Put it in the Scaffold's bottomBar or floatingToolbar slot."
+  gotchas:
+    - text: "The modifier the caller passes is not at the head of the chain — it is inserted via `.then(modifier)` after the library's own squircleBackground and before the horizontal padding (the source explicitly suppresses ktlint's modifier-not-used-at-root rule for this). Consequences: your `.background(...)` will cover the capsule background, your `.padding(...)` becomes inner padding rather than outer margin, and things like `.size()` also act at the wrong layer. To control the outer position, rely on the parent container, not the modifier."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:350"
+    - text: "shadowElevation is just a boolean switch: the shadow is added only when `if (shadowElevation > 0.dp)`, and the shadow parameters are hard-coded to radius=10.dp, black, alpha=0.2f. Passing 1.dp and passing 40.dp render exactly the same."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:336"
+    - text: "The bottom spacing is a nameless magic number: iOS is always 36.dp; other platforms look at the bottom inset of `WindowInsets.navigationBars` — when non-zero it uses `26.dp + system inset` (so three-button navigation is about 74dp), and only when the inset is 0 (desktop / Web / landscape side navigation, etc.) does it fall back to 36.dp. Moreover this padding is added unconditionally (NavigationBar.kt:314); defaultWindowInsetsPadding = false only turns off the captionBar segment (NavigationBar.kt:317-322) and cannot turn it off — to change it you can only make a negative offset in the parent container or rewrite this component yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:289"
+  visual:
+    corner_radius: "50.dp (defaults to FloatingToolbarDefaults.CornerRadius)"
+    min_height: "52.dp"
+    horizontal_outside_padding: "36.dp (takes effect only when horizontalAlignment is Start/End)"
+    horizontal_padding: "12.dp (inside the bar), item_spacing 12.dp"
+    shadow: "fixed radius=10.dp / black / alpha=0.2f, switched by shadowElevation > 0.dp"
+    divider: "when showDivider = true it fakes a 1px border with \"an outline-colored squircle background + 0.75.dp padding\" (avoiding the squircle outline calculation)"
+  state: "Purely controlled, zero state. content is a plain lambda (not RowScope) and arranges itself into a Row internally."
+  m3: "No direct counterpart. The closest is M3 expressive's FloatingToolbar/HorizontalFloatingToolbar, but that M3 set doesn't carry navigation semantics. M3's NavigationBar is bottom-anchored full width, with no floating capsule form."
+
+FloatingNavigationBarItem:
+  summary: "An item of the floating navigation bar, drawing only one icon."
+  gotchas:
+    - text: "The label parameter is never rendered as text — it is only used as the icon's contentDescription. This component is always icon-only (unlike NavigationBarItem's three modes). Assuming that passing label shows text is wrong."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:415"
+    - text: "It is a plain function, not a RowScope extension (NavigationBarItem is); the two signatures look identical but are not interchangeable, and it does not split the width evenly."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:377"
+    - text: "It uses NavigationBarDefaults.navigationBarItemColors(), while the three alpha constants in FloatingNavigationBarDefaults (SelectedPressedAlpha / UnselectedPressedAlpha / UnselectedAlpha) have zero references in the whole repository and are dead constants in the public API. Changing them has no effect — and their values happen to equal those in NavigationBarDefaults, so you can't tell the difference either."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationBar.kt:530"
+  visual:
+    icon_size: "28.dp"
+    icon_padding: "10.dp (all sides)"
+    alpha: "the same set as NavigationBarItem (0.4 / 0.6 / 0.5 / 1.0, multiplied with the original color's alpha)"
+  state: "Purely controlled. indication = null, no ripple."
+  m3: "No counterpart."
+
+FloatingToolbar:
+  summary: "A container responsible only for appearance (a rounded card + optional shadow/outline); its position on screen is decided by the parent — the typical usage is to place it in the Scaffold's floatingToolbar slot and position it with floatingToolbarPosition."
+  gotchas:
+    - text: "The KDoc says \"arranged either horizontally or vertically,\" but the component has no orientation parameter; internally it is just a Box. Whether it is horizontal or vertical depends entirely on whether you put a Row or a Column in content yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/FloatingToolbar.kt:70"
+    - text: "shadowElevation is a boolean switch; the shadow parameters are hard-coded to radius=10.dp, black, alpha=0.1f. 4.dp and 40.dp render the same."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/FloatingToolbar.kt:57"
+    - text: "It handles no window insets itself, and doesn't know bottomBar exists. When placed in the Scaffold's floatingToolbar slot with a Bottom* position it covers the NavigationBar (see the Scaffold entry); with a Top*/Center* position it shifts down by one status-bar height due to Scaffold's topInset double-counting."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Scaffold.kt:282"
+  visual:
+    corner_radius: "50.dp"
+    outside_padding: "PaddingValues(12.dp, 8.dp)"
+    shadow: "fixed radius=10.dp / black / alpha=0.1f"
+    divider: "same as FloatingNavigationBar, drawing the border with \"an outline-colored squircle + 0.75.dp padding\""
+  state: "Stateless. Here the modifier is at the head of the chain (opposite to FloatingNavigationBar), which is idiomatic Compose. It is marked @NonRestartableComposable and is a pure delegating wrapper."
+  m3: "Corresponds to material3 expressive's HorizontalFloatingToolbar / VerticalFloatingToolbar. The differences are obvious: that M3 set comes with orientation, expanded/collapsed animation, a floatingActionButton slot, and scroll linkage (FloatingToolbarScrollBehavior); this Miuix one is only 101 lines, a pure appearance container, with orientation and animation all left to the caller. The ToolbarPosition enum is defined in Scaffold.kt, not here."
+
+TabRow:
+  summary: "A flat segmented tab bar (no outer frame); the selected item is indicated by a squircle background block, and when labels exceed the width it can scroll horizontally and automatically scrolls the selected item to center."
+  gotchas:
+    - text: "The maxWidth parameter (and its default TabRowMaxWidth = 98.dp) actually clamps nothing. Entering the `idealWidth > maxWidth` branch in calculateTabWidth already presupposes that `totalMaxWidth < availableWidth` holds, so it always returns idealWidth, and the `else maxWidth` line is an unreachable branch. Result: the tab width has only a lower bound, no upper bound, and always splits to fill the container — placing two or three tabs on a wide screen gives giant tabs hundreds of dp wide; passing maxWidth won't stop it, and you can only wrap the TabRow in a widthIn yourself."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:494"
+    - text: "The modifier is sandwiched inside `Modifier.fillMaxWidth().then(modifier).height(height)`. Writing `.height(...)` in the modifier is overridden by the trailing height parameter, and writing `.width(...)` is interfered with by the leading fillMaxWidth — to change the size use the height parameter and an outer container."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:105"
+    - text: "There is one interactionSource for the whole TabRow, passed to every TabItem. Once you explicitly pass one, pressing any tab makes all tabs show press feedback simultaneously. The default null (each selectable builds its own internally) is the normal behavior."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:181"
+    - text: "indication defaults to null, so there is no ripple by default. This is a deliberate performance tradeoff — only when you pass indication is a squircleClip (an off-screen layer) added."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:366"
+    - text: "The selected indicator is placed directly at `selectedTabIndex * (tabWidth + spacing) - scrollOffset`, with no animation, so switching is a hard jump. For a sliding animation use TabRowWithContour."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:155"
+  visual:
+    height: "42.dp (TabRowDefaults.TabRowHeight)"
+    corner_radius: "12.dp"
+    min_width: "76.dp (the only width constraint that actually takes effect)"
+    max_width: "98.dp (declared value, does not actually take effect, see above)"
+    item_spacing: "9.dp (a default literal, not in Defaults)"
+    item: "unselected has a 1.dp squircle outline, selected has no outline; horizontal inner padding 12.dp; font size body1; maxLines=1 + Ellipsis"
+  state: "Purely controlled (selectedTabIndex + onTabSelected). The internal LazyListState can be passed in (the listState parameter); if not passed it is built internally. The selected item auto-scrolls to center: the first time uses scrollToItem for an instant jump, afterward uses animateScrollToItem. The horizontal remaining scroll amount is entirely consumed by a NestedScrollConnection while the vertical is passed through unchanged, so scrolling the TabRow to its end doesn't drag the outer horizontal, but the outer vertical list still scrolls normally."
+  m3: "Corresponds to material3's TabRow/ScrollableTabRow + PrimaryTabRow family, but the form is completely different. M3 is \"an underline indicator + text tabs,\" while Miuix is an iOS/MIUI-style segmented control (the selected item gets a rounded background block). M3 uses a tabs slot + Tab child components, while Miuix takes a `List<String>` directly and cannot customize the content of an individual tab (there is no entry for an icon or a custom composable)."
+
+TabRowWithContour:
+  summary: "A segmented tab bar with an outer frame — compared with TabRow it adds a background frame and inset, and the selected indicator has a 200ms sliding animation. The parameter list is word-for-word identical to TabRow, only the defaults differ."
+  gotchas:
+    - text: "It shares the same calculateTabWidth as TabRow, so maxWidth (default TabRowWithContourMaxWidth = 84.dp) likewise never takes effect, and tabs always split to fill."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:494"
+    - text: "There are four differences from TabRow: an extra outer frame inset by 5.dp (outer corner radius = cornerRadius + 5.dp); the indicator slides with Animatable + tween(200, LinearEasing) rather than jumping hard; the item font size is body2 whereas TabRow's is body1, and the item has no extra horizontal 12.dp padding; TabItemWithContour also does not draw TabRow's \"unselected 1.dp squircle outline\" (TabRow.kt:360-364 vs 409-429). The rest (width calculation, center scrolling, nested scroll consuming the horizontal) is all the same — which to pick depends only on whether you want an outer frame and a sliding animation."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:226"
+    - text: "The outer BoxWithConstraints has no background (TabRow does); the background is drawn on the inner layer. So passing it `Modifier.background(...)` lands differently than with TabRow."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:229"
+  visual:
+    height: "45.dp"
+    corner_radius: "8.dp (outer-frame corner radius = 8 + 5 = 13.dp)"
+    contour_padding: "5.dp (a hard-coded literal, not configurable)"
+    min_width: "62.dp"
+    max_width: "84.dp (declared value, does not actually take effect)"
+    item_spacing: "5.dp"
+    indicator_anim: "tween(200ms, LinearEasing); the first placement uses snapTo, only afterward animateTo"
+  state: "The same controlled model as TabRow, plus an extra internal Animatable driving the indicator displacement and a lastSettledSelectedTabIndex used to distinguish \"first placement\" from \"subsequent switch.\""
+  m3: "Same as TabRow — M3 has no framed segmented-control counterpart; the closest is SingleChoiceSegmentedButtonRow, but that is button-group semantics, not tabs."
+
+BreadcrumbBar:
+  summary: "A file-manager-style path breadcrumb — capsule segments + arrow separators; on overflow it scrolls horizontally rather than collapsing into an ellipsis, and automatically scrolls the highlighted segment to center."
+  gotchas:
+    - text: "highlightIndex defaults to items.lastIndex; passing a negative value (e.g. -1) turns off both the highlight and the auto-scroll. It is decoupled from items — you can show the full path while highlighting any segment (e.g. the parent directory the user backed into)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:95"
+    - text: "The auto-scroll coordinate reconstructs content coordinates with `positionInRoot().x + scrollState.value`, which implicitly assumes \"the BreadcrumbBar's own left edge is the window's left edge.\" Placing it in a Row with left padding, or to the right of a NavigationRail, will shift the highlighted segment's centered position overall."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:206"
+    - text: "When enabled = false the arrow separators also switch to disabledColor rather than separatorColor, i.e. the description of separatorColor only holds in the enabled state; but horizontal scrolling still works in the disabled state."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:147"
+    - text: "BreadcrumbItem's text is optional and falls back to path when null. To display \"My Phone\" while the path is /storage/emulated/0, you rely on separating these two fields."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:151"
+    - text: "insideMargin is added inside horizontalScroll (`modifier.horizontalScroll(...).padding(insideMargin)`), so this inner padding scrolls away with the content rather than staying fixed at the container's edge."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:141"
+  visual:
+    item_height: "32.dp (capsule, CircleShape)"
+    item_horizontal_padding: "10.dp (equal to the corner radius, making the two ends full semicircles)"
+    item_max_width: "160.dp (overflow is Ellipsis-truncated)"
+    inside_margin: "PaddingValues(horizontal = 12.dp, vertical = 8.dp)"
+    separator: "a 10×16.dp arrow icon, 4.dp on each side; mirrored with scaleX = -1 under RTL"
+    colors: "the background color is derived from the text color (onBackground alpha 0.1, primary alpha 0.2), auto-adapting to light/dark themes"
+  state: "Purely controlled (items + onItemClick + highlightIndex). scrollState can be passed in to preserve the scroll position; if not passed it is rememberScrollState internally. The first positioning uses scrollTo for an instant jump, subsequent highlightIndex changes use animateScrollTo."
+  m3: "No counterpart. Material3 has no breadcrumb component; the biggest difference from a Web breadcrumb is that on overflow it scrolls horizontally rather than collapsing into `...`."
+
+"List<BreadcrumbItem>.joinToPath":
+  summary: "An extension function that joins the path segments of a breadcrumb list into a complete path string."
+  gotchas:
+    - text: "It joins each item's path field, not the display text. In scenarios where an item was given an alias text, joinToPath's result is the real path rather than the text you see — this is exactly its intent, but it's easily misused as \"joining display text.\""
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:334"
+    - text: "separator defaults to \"/\", and a no-argument call does not automatically add leading/trailing slashes — `listOf(a, b).joinToPath()` gives \"a/b\" rather than \"/a/b\". For Windows style pass \"\\\\\" explicitly (a single-backslash literal in Kotlin source)."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/BreadcrumbBar.kt:334"
+  visual: {}
+  state: "A pure function, stateless."
+  m3: "No counterpart."
+
+SearchBar:
+  summary: "A search-bar shell — responsible for showing outsideEndAction (a cancel button and the like) and the results-area content when expanded, and registering back-key handling. The actual input field is the paired but independent InputField."
+  gotchas:
+    - text: "The SearchBar's expanded and the InputField's expanded are two independent parameters that the caller must wire together manually with the same state. Passing expanded only to SearchBar while InputField is not wired means the input field won't gain focus or trigger expansion."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:86"
+    - text: "Undocumented side effect: when expanded becomes false, InputField automatically clears the query — delay(100) → text fades out → calls onQueryChange(\"\") → restores opacity → clearFocus. Code that saves query as the \"submitted search term\" will have it wiped by the component; the hand-written `searchText = \"\"` in the doc example is actually redundant."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:304"
+    - text: "SearchBar internally registers a NavigationBackHandler: when expanded is true it intercepts the system back and calls back onExpandedChange(false). This brings a runtime dependency (androidx.navigationevent), and also means your own back handling will be preempted by it."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:122"
+    - text: "InputField's expansion is focus-driven (onFocusChanged → onExpandedChange(true)), and it has a workaround for the focus-reassignment bug on Android API 26-27: when collapsed the whole TextField is disabled, and click-to-expand is instead handled by an external pointerInput. So on these OS versions the collapsed TextField is enabled=false, and any custom logic depending on its editability will break."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/SearchBar.kt:229"
+  visual:
+    inside_margin: "DpSize(12.dp, 0.dp) (horizontal 12dp, vertical 0dp)"
+    input_field_shape: "CircleShape (capsule)"
+    outside_end_action_anim: "expandHorizontally + slideInHorizontally (slides in from the right)"
+  state: "SearchBar itself is stateless; expanded is fully controlled (the default false is only the value when the parameter is omitted, it does not mean it flips itself). InputField is also controlled and only internally holds a focusRequester, interactionSource, and an Animatable for fade-out. Three state edges: gaining focus → expand; expanded becomes true → request focus; expanded becomes false while focused → clear + unfocus."
+  m3: "Corresponds to material3.SearchBar / DockedSearchBar + SearchBarDefaults.InputField. The structure is similar (both are a shell + inputField slot + controlled expanded), but M3's SearchBar covers the full screen when expanded and comes with an animation container, while Miuix just expands an AnimatedVisibility block in place; M3 does not clear query for you on collapse, Miuix does."
+
+PullToRefresh:
+  summary: "A MIUI-style pull-to-refresh container (damping curve + capsule indicator). Wrap scrollable content in it; it can cooperate with a TopAppBar's collapse behavior."
+  gotchas:
+    - text: "isRefreshing is a level value that the caller must host; the component calls onRefresh only once when the pull passes the threshold. If onRefresh doesn't set isRefreshing to true, the indicator immediately retracts; if it isn't set back to false after refresh completes, it spins forever."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:159"
+    - text: "Only a touch/touchpad press-pan gesture can start a pull session: the mouse wheel (PointerEventType.Scroll) does not change the session state, and mouse press is also explicitly excluded (`it.type != PointerType.Mouse`). On desktop and Web you can never pull out the refresh indicator with a mouse — this is deliberate (the wheel has no \"release\" event), but it makes people think the component is broken."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:199"
+    - text: "The name contentPadding is misleading: it is never applied to content; its only use is `RefreshHeader(modifier = Modifier.offset(y = contentPadding.calculateTopPadding()))`, and left/right/bottom are all ignored. It is actually \"the top offset of the refresh indicator,\" used to push the indicator below the TopAppBar."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:234"
+    - text: "After passing topAppBarScrollBehavior, the appbar's scroll events are forwarded via PullToRefresh's arbitrating connection (when Idle the appbar collapses first, during a pull refresh takes priority, during refreshing everything is consumed). Don't additionally attach the same scrollBehavior.nestedScrollConnection to the inner list, or the same scroll amount gets consumed twice."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:174"
+    - text: "onPullProgress is collected by snapshotFlow, and at composition it immediately calls back once with the current value (usually 0f), only then followed by real changes. Don't treat \"receiving the callback\" as the signal that \"the user started pulling.\""
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:151"
+    - text: "The default strings are four hard-coded English lines (\"Pull down to refresh\" / \"Release to refresh\" / \"Refreshing...\" / \"Refreshed successfully\"), and the default color is Color.Gray rather than a theme color. For localization and coloring you must explicitly pass refreshTexts and color."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:1027"
+  visual:
+    damping_curve: "f(x) = x - x² + x³/3, slope decreasing monotonically from 1 to 0 (1:1 tracking at the start, heavier the more you pull); f(1) = 1/3, i.e. the maximum damped displacement is one third of the window height"
+    trigger_threshold: "default refreshThreshold = 0.25 → trigger displacement = 0.25 × H/3 = H/12; converted to a finger travel of about 0.091×H (about 219px on a 2400px screen)"
+    indicator_full_scale: "H × (1/6) × (1/4) = H/24, i.e. a finger slide of about 0.044×H (about 104px) already fills the indicator"
+    circle_size: "20.dp"
+    text_style: "14.sp / Bold / Color.Gray"
+    complete_anim: "tween(200ms, CubicBezierEasing(0f, 0f, 0f, 0.37f)) (fast first, then extremely slow)"
+  state: "Bidirectional level sync — the external isRefreshing and the internal five-state machine (Idle / Pulling / ThresholdReached / Refreshing / RefreshComplete) drive each other, with the effect keyed by refreshState so as to re-sample the level (preventing a true→false pulse within one frame from being lost). The indicator displacement is driven by a hand-written frame loop + a spring engine, updating both dragOffset (visual) and currentTouch (the input of the damping curve) every frame, so that when the user grabs the list mid-way it doesn't jump."
+  m3: "Corresponds to material3.PullToRefreshBox / rememberPullToRefreshState. M3's state only manages progress and animation, and the indicator is fully replaceable (an indicator slot); Miuix's indicator is four hard-coded Canvas drawings, only color/size/text are changeable, with no indicator slot. M3's Modifier.pullToRefresh also works, Miuix only has the wrapper container. Also, M3's pull is draggable with a mouse on desktop, while Miuix explicitly excludes the mouse."
+
+rememberPullToRefreshState:
+  summary: "Creates and remembers the visual state object for pull-to-refresh. You only need to call it explicitly when tuning the threshold or reading the pull progress externally."
+  gotchas:
+    - text: "It uses remember rather than rememberSaveable — the state resets to zero after a screen rotation or process death. The isRefreshing that truly needs to survive configuration changes must be hosted by the caller with rememberSaveable (this is also why the signature splits it out)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:262"
+    - text: "refreshThreshold is \"the fraction of the full damping travel\" rather than pixels or dp, and is coerceIn(0f, 1f). The trigger point is triggerProgressOffset = refreshThreshold × full damping travel, determined independently (PullToRefresh.kt:511 / 579), so passing 0f indeed triggers on any bit of pull, and lowering it lowers it without bound. The other hard-coded threshold refreshThresholdOffset (window height × 1/6 × 1/4) participates in only two places: taken as max with triggerProgressOffset as the denominator of pullProgress (effectiveThresholdOffset, PullToRefresh.kt:319-320), and taken as min to decide the indicator's full-draw point (visualProgress, PullToRefresh.kt:364-365)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:272"
+    - text: "The threshold depends on LocalWindowInfo.current.containerSize.height, and on the first frame the window size may still be 0, at which point the threshold is 0. The code has a SideEffect and a while loop specifically to remedy this startup race; a side effect is that in scenarios where isRefreshing is set to true programmatically on the first frame, the indicator position is retroactively corrected once."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:269"
+    - text: "The cachedNestedScrollConnection on PullToRefreshState is a public var, an internal implementation detail leaking into the public API. Don't read or write it."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt:331"
+  visual: {}
+  state: "Holds the visual state itself (dragOffset / refreshState / three progress values), with the logical state isRefreshing externalized. Publicly readable are refreshThreshold and three derivedStateOf progress values: pullProgress (relative to the trigger threshold, saturating at 1), fullDragProgress (relative to the full range, used for onPullProgress), and visualProgress (relative to the smaller of the two thresholds, ensuring the indicator is certainly fully drawn when entering ThresholdReached)."
+  m3: "Corresponds to material3.rememberPullToRefreshState. M3's state only exposes distanceFraction and an animate method; Miuix adds threshold configuration, the five-state machine, and three progress values with distinct semantics."
+
+VerticalScrollBar:
+  summary: "An independent scrollbar attached beside scrollable content (it does not wrap the content). The whole ScrollBar API is marked @ExperimentalScrollBarApi."
+  gotchas:
+    - text: "The whole ScrollBar API requires opt-in (@ExperimentalScrollBarApi), though the level is WARNING not ERROR — it compiles without @OptIn, just with a warning. The annotation's own description says \"has known issues and may change without notice,\" and it is the only component in this group without a docs page (there is no scrollbar.md under docs/components/)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/interfaces/ExperimentalScrollBarApi.kt:15"
+    - text: "It does not wrap content but is a sibling node that occupies its own place: in measurePolicy the width is fixed at thumbWidth + endPadding×2 and the height fills constraints.maxHeight. The correct usage is to put it and the scrolling content together in a Box and align it to the edge; placing it directly in a Column takes up a row."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:464"
+    - text: "The initial opacity is 0f, and in drawBehind `opacity <= 0f` returns directly — that is, the scrollbar is completely invisible on first entering the page; you must scroll once (or hover the mouse) for it to fade in, then it fades out after 1 second. What seems like \"it didn't render\" is mostly this."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:272"
+    - text: "The fade-out animation is hard-coded as `animate(initialValue = 1f, ...)`, so when interrupted and re-triggered mid-way it first jumps back to fully opaque and then fades out, showing a flicker."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:301"
+    - text: "Clicking the empty track area neither pages nor jumps — the gesture has two layers of filtering: first whether it falls within the 48dp touch band, then whether it falls within the thumb's pixel range; only when both pass does dragging begin."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:366"
+    - text: "The thumb-length animation is implemented by writing snapshot state and launching a coroutine inside drawBehind (an explicit Compose anti-pattern; it only avoids entering an infinite redraw thanks to two gates, \"difference ≥ 1px\" and \"skip if the previous animation hasn't finished\"). This is one of the main reasons this component is marked experimental, and it risks blowing up on future Compose versions."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:415"
+  visual:
+    thumb_width: "3.64.dp (animates to 6.dp on hover/drag, tween 150ms)"
+    end_padding: "3.46.dp"
+    thumb_min_length: "36.dp"
+    corner_radius: "Dp.Unspecified → takes half of thumbWidth"
+    alpha: "0.1 normally, 0.3 on hover/drag (when thumbColor is Unspecified; if a color is passed explicitly it uses that color's own alpha)"
+    fade: "starts fading out 1000ms after scrolling stops, fade-out takes 500ms"
+    touch_target: "a 48.dp-wide touch band"
+  state: "Holds no scroll state at all — it reads only the three quantities \"total content length / current offset / viewport length\" from a ScrollBarAdapter, and scrolling is still owned by the original ScrollState/LazyListState. Internally it only has visual state like opacity, isDragging, and displayedThumbLength."
+  m3: "No counterpart (Material3 mobile has no scrollbar component). By lineage it is JetBrains Compose Desktop's Scrollbar: structures and names like ScrollBarAdapter, LazyLineContentAdapter, and firstFloatingVisibleItemIndex all come from there."
+
+HorizontalScrollBar:
+  summary: "A horizontal scrollbar; its parameter list is word-for-word identical to VerticalScrollBar, only the direction differs."
+  gotchas:
+    - text: "The value of trackPadding in the horizontal branch hard-codes LayoutDirection to Ltr (`trackPadding.calculateLeftPadding(LayoutDirection.Ltr)` / `calculateRightPadding(LayoutDirection.Ltr)`). Under an RTL layout the start/end padding is taken from the opposite side."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:248"
+    - text: "Same as the vertical version: initially invisible (opacity 0), does not wrap content (occupies a horizontal strip of thumbWidth + endPadding×2 height), and requires opt-in."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:478"
+  visual:
+    same_as_vertical: "thumb 3.64.dp / endPadding 3.46.dp / minLength 36.dp / touch band 48.dp"
+  state: "Same as VerticalScrollBar, a read-only adapter."
+  m3: "No counterpart."
+
+rememberScrollBarAdapter:
+  summary: "Normalizes a ScrollState / LazyListState / LazyGridState into the three quantities the scrollbar can read (total content length, current offset, viewport length). Three identically named overloads dispatch by state type."
+  gotchas:
+    - text: "A lazy list's contentSize is extrapolated as \"average visible-item size × total item count,\" not the real total length. When item heights differ, the thumb length and position jump during scrolling — this is a fundamental compromise of lazy scrollbars and the main source of known issues. Only equal-height lists scroll smoothly."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:603"
+    - text: "The column count of a LazyGrid is inferred from the visible items (counting consecutively increasing columns until they break). A grid containing spanning items (GridItemSpan > 1) miscounts the column count, distorting the thumb ratio."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:773"
+    - text: "Only these three states have overloads. TextFieldScrollState, PagerState, and custom scrollable components have no adapter; you must implement the ScrollBarAdapter interface yourself (four members, one of which, scrollTo, is suspend)."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ScrollBar.kt:62"
+  visual: {}
+  state: "Stateless; it just remembers a read-only view keyed by the scroll state object. The adapter does not own scrolling; scrollTo forwards to the original state (a distance smaller than one screen uses precise scrollBy, otherwise it estimates the target index via average height and then snapTo)."
+  m3: "No counterpart; corresponds to JetBrains Compose Desktop's identically named rememberScrollbarAdapter (mind the casing: Miuix is ScrollBar with two capitals)."
+
+LinearProgressIndicator:
+  summary: "A horizontal bar progress indicator. Passing null for progress means the indeterminate state (a looping rounded segment); passing 0f..1f means the determinate state."
+  gotchas:
+    - text: "The indeterminate state actually has only one segment scrolling, not three. The phase offset in `drawIndeterminateSegment` is written as `segmentIndex * (0.45f + 0.55f)`, and the parenthesized part exactly equals 1.0, while the position is taken modulo 1, so the three loop iterations draw completely identical rectangles. Visually it appears as \"one segment scrolling,\" and this is algebraically certain, not an illusion."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:275"
+    - text: "The modifier is followed by `.fillMaxWidth().height(height)` — a width constraint you write in the modifier is overridden by fillMaxWidth, and a height you write is overridden by the height parameter. To control the width, rely on the parent container."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:72"
+    - text: "The disabledForegroundColor parameter in progressIndicatorColors() never takes effect: none of the three indicators has an enabled parameter, and internally they all call `colors.foregroundColor(true)`. It is a color token shared over from Slider, and passing it does nothing."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:56"
+  visual:
+    height: "6.dp (DefaultLinearProgressIndicatorHeight)"
+    corner_radius: "height / 2 (semicircles at both ends)"
+    indeterminate_cycle: "tween(1250ms, LinearEasing) looping infinitely, segment width takes 45%"
+  state: "Stateless, purely controlled. progress is coerceIn(0f, 1f). progress == null is the only way to express the indeterminate state (carrying the semantics via null, not two overloads)."
+  m3: "Corresponds to material3.LinearProgressIndicator. M3 uses two separate overloads to distinguish determinate/indeterminate (one takes `() -> Float`, one doesn't), while Miuix merges them into one with a nullable Float; M3 has parameters like gapSize/drawStopIndicator/strokeCap, while Miuix only has height and a set of colors."
+
+CircularProgressIndicator:
+  summary: "A ring progress indicator. Passing null for progress means the indeterminate state (a rotating arc); passing 0f..1f means the determinate state."
+  gotchas:
+    - text: "size is a parameter, not decided by the modifier: `modifier.semantics{}.size(size)`, so a size written in the modifier is overridden by the trailing size."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:161"
+    - text: "It shares ProgressIndicatorColors with LinearProgressIndicator, so disabledForegroundColor likewise never takes effect (no enabled parameter)."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:132"
+  visual:
+    size: "30.dp (DefaultCircularProgressIndicatorSize)"
+    stroke_width: "4.dp"
+    indeterminate_anim: "rotation tween(1000ms, LinearEasing) looping infinitely + an independent sweep animation"
+  state: "Stateless, purely controlled. progress == null means the indeterminate state."
+  m3: "Corresponds to material3.CircularProgressIndicator, with differences the same as LinearProgressIndicator (nullable Float vs two overloads; no fine-grained parameters beyond gapSize/trackColor)."
+
+InfiniteProgressIndicator:
+  summary: "An \"infinite\" indicator of one ring + one orbiting dot, for waiting scenarios where there is no progress to speak of."
+  gotchas:
+    - text: "It has neither a progress parameter nor a colors parameter; the color is a separate `color: Color = Color.Gray`, hard-coded and not going through the theme (there is no corresponding token in MiuixTheme.colorScheme). Under a dark theme, not passing color gives an abrupt grey."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:222"
+    - text: "The track radius is hard-coded as `radius - 2 * orbitingDotSize`, so changing orbitingDotSize changes both the dot's size and its orbit radius at once, and the two cannot be tuned independently."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ProgressIndicator.kt:253"
+  visual:
+    size: "20.dp"
+    stroke_width: "2.dp"
+    orbiting_dot_size: "2.dp"
+    rotation: "tween(800ms, LinearEasing) looping infinitely"
+  state: "Stateless, pure animation."
+  m3: "No counterpart. The closest is M3's indeterminate CircularProgressIndicator, but the visual language is completely different (M3 is a gapped-arc sweep, this is a full ring + orbiting dot)."
+
+Snackbar:
+  summary: "The default appearance of a single snackbar (message + optional action button + optional dismiss button). Usually not used directly; it is called by SnackbarHost's default content, and you write it explicitly only when customizing the appearance."
+  gotchas:
+    - text: "It takes SnackbarData, not a string. When customizing content you must read values via `data.visuals.message` / `.actionLabel` / `.withDismissAction`, and call `data.performAction()` / `data.dismiss()` in the buttons to wrap up — if you don't, the suspended coroutine of showSnackbar never returns."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:392"
+    - text: "The constructor of SnackbarDuration.Custom carries `require(durationMillis > 0)`, so passing 0 or a negative number throws rather than \"disappearing immediately\" or \"never disappearing\" (the latter uses Indefinite). Also, within the SnackbarDuration scope `Long` resolves to the sibling `data object Long`, so the source must write kotlin.Long."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:91"
+    - text: "The shadow parameters are hard-coded (radius=10.dp / black / alpha=0.1f); there is no elevation parameter to tune."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:405"
+  visual:
+    corner_radius: "16.dp (squircle)"
+    inside_margin: "PaddingValues(all = 12.dp)"
+    outer_padding: "PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp)"
+    action_button: "corner radius 50.dp, inner padding horizontal 12.dp / vertical 0.dp"
+    shadow: "fixed radius=10.dp / black / alpha=0.1f"
+  state: "Stateless. It provides colors.contentColor as LocalContentColor via CompositionLocalProvider, so the internal Text/Icon automatically pick up the correct foreground color."
+  m3: "Corresponds to material3.Snackbar. M3's Snackbar also takes SnackbarData (or an overload taking action/dismissAction slots directly); the difference is that M3 has finer parameters like shape/containerColor/contentColor/actionContentColor/actionOnNewLine/elevation, while Miuix only has cornerRadius/colors/insideMargin, and elevation is not tunable."
+
+SnackbarHost:
+  summary: "The host and stack layout for snackbars — it watches the SnackbarHostState queue, plays enter/exit animations, runs the auto-dismiss timer, and handles swipe-to-dismiss. Put it in the Scaffold's snackbarHost slot."
+  gotchas:
+    - text: "The auto-dismiss timer lives in SnackbarHost, not in SnackbarHostState. Without mounting SnackbarHost into composition (the Scaffold's snackbarHost defaults to an empty lambda), showSnackbar's coroutine suspends forever and entries keep piling up in the state. This is the root cause of \"calling showSnackbar and nothing happens.\""
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:302"
+    - text: "The parameter name is state, not hostState (the doc example writing `SnackbarHost(hostState = ...)` won't compile)."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:273"
+    - text: "It is stack-based rather than queue-based: calling showSnackbar multiple times makes several show at once (the new one is added to the head of the list + LazyColumn reverseLayout, so visually the newer is below), rather than playing them one at a time in a queue. For \"show only the latest\" you must dismiss the old ones yourself first."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:224"
+    - text: "The timeout duration is adjusted by the accessibility service's calculateRecommendedTimeoutMillis (and is always reported as \"with icon + with text\"), so on a device with the accessibility service enabled the actual dwell time is longer than 4000/10000ms."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:255"
+    - text: "\"Logical removal\" and \"composition removal\" are separate: dismiss only sets visible to false, and the actual removal from the list is done by the UI side after the exit animation goes idle. So the length of currentSnackbars is briefly larger than the visible entries."
+      severity: "low"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:299"
+  visual:
+    host_bottom_padding: "12.dp"
+    duration: "Short 4000ms / Long 10000ms / Indefinite Long.MAX_VALUE / Custom custom (must be > 0)"
+    swipe_threshold: "dismisses once the displacement exceeds half the width (positionalThreshold = distance * 0.5f)"
+    enter: "slideInVertically + expandVertically(clip = false)"
+    exit: "the bottommost one (index == 0) slides out, the rest use fadeOut; all with shrinkVertically(clip = false)"
+  state: "SnackbarHostState is `remember { SnackbarHostState() }` by the caller (not rememberSaveable, not restored on process death). showSnackbar is suspend and suspends until that entry is dismissed or performAction'd, returning a SnackbarResult; therefore it must be called inside rememberCoroutineScope().launch. newestSnackbarData() / oldestSnackbarData() are suspend member functions (not extension functions)."
+  m3: "Corresponds to material3.SnackbarHost. The biggest difference is that M3's SnackbarHostState shows only one at a time (a new one cancels the old, serialized via a Mutex), whereas Miuix is a stack that can layer several at once; M3's host does only single-entry animation, while Miuix's host is internally a reverseLayout LazyColumn. M3's parameter name is hostState, Miuix's is state."
+
+TooltipBox:
+  summary: "A container that attaches a tooltip to any anchor — triggered by long-press (touch) or hover (mouse). There are two overloads: the full version takes positionProvider + a tooltip slot + state, and the convenience version takes only a text string."
+  gotchas:
+    - text: "The convenience version `TooltipBox(text = ...)` has a fully hard-coded style: body2 font size, maxLines = 2, Ellipsis truncation, with no configurable parameters. Slightly longer text gets truncated to two lines with an ellipsis; for more control you must switch to the full version + PlainTooltip."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:621"
+    - text: "The tooltip's orientation is not inferred from the positionProvider's behavior but by casting it to TooltipPopupPositionProvider and reading the positioning field; if the cast fails it is always treated as Below. When passing a custom PopupPositionProvider, the caret of PlainTooltip/RichTooltip is drawn on the wrong side (or not drawn at all)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:283"
+    - text: "All gesture entries (long-press, mouse hover) call show() with MutatePriority.UserInput, while the timeout branch is taken only when \"not persistent and the priority is not UserInput\" — that is, a tooltip popped by a touch long-press never times out automatically and can only be dismissed by tapping elsewhere or an explicit dismiss. The mouse one retracts when the pointer leaves the anchor. Only programmatically calling state.show() consumes TooltipDuration."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:202"
+    - text: "focusable defaults to false. When a RichTooltip carries a clickable action you must explicitly pass focusable = true, otherwise clicking outside won't close it and its inner buttons may be unclickable."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:278"
+  visual:
+    enter: "fadeIn + scaleIn(initialScale = 0.9f), reusing ListPopupDefaults's animation spec"
+    exit: "fadeOut + scaleOut(targetScale = 0.9f); the exit scale deliberately uses a spring rather than a tween (so it can pick up the unfinished enter velocity and avoid a \"pause then reverse\")"
+  state: "state is hosted by rememberTooltipState() and required (the convenience version has a default). TooltipState uses a MutatorMutex to ensure only one tooltip is visible at a time. isVisible is judged by `transition.targetState || !transition.isIdle`, i.e. it counts as visible even while the animation hasn't finished, ensuring an interrupted enter can play its exit animation in reverse."
+  m3: "Corresponds to material3.TooltipBox (also a positionProvider + tooltip + state + content structure). This Miuix set is forked from foundation's experimental BasicTooltipBox, and the only substantive behavior change is: when the mouse leaves the anchor, a persistent tooltip is not closed (so the cursor can move onto a RichTooltip to click its buttons) — which is exactly M3's behavior. M3's TooltipDefaults provides factories like rememberPlainTooltipPositionProvider(), while Miuix expresses the orientation with the TooltipAnchorPosition enum."
+
+PlainTooltip:
+  summary: "An appearance container for a simple text tooltip; it can only be written in TooltipBox's tooltip slot."
+  gotchas:
+    - text: "It is an extension function of `TooltipScope`; calling it outside TooltipBox's tooltip slot fails to compile."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:455"
+    - text: "caretShape defaults to null, i.e. by default there is no little caret pointing at the anchor. And it is not really a Shape parameter — it is only null-checked as a switch, and the actual caret is a hard-coded triangle Path; passing any non-null Shape gives the same triangle."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:549"
+    - text: "The caret is drawn only when the orientation is Above or Below. With a Start/End orientation, even passing caretShape draws nothing (silently no-op)."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:550"
+  visual:
+    max_width: "200.dp"
+    corner_radius: "12.dp"
+    inside_margin: "PaddingValues(horizontal = 12.dp, vertical = 8.dp)"
+    caret_size: "DpSize(16.dp, 8.dp); its position is coerceIn-clamped within the corner radius so it doesn't run onto the corner"
+  state: "Stateless. It obtains positioning and obtainAnchorBounds() via TooltipScope to decide the caret's orientation and horizontal position."
+  m3: "Corresponds to material3.PlainTooltip (also a TooltipScope extension). M3's caret is a real Shape provided via TooltipDefaults and customizable, while Miuix's caretShape is just a boolean switch; M3's PlainTooltip has maxWidth/shape/contentColor/containerColor/tonalElevation/shadowElevation, while Miuix lacks the two elevation items."
+
+RichTooltip:
+  summary: "A rich tooltip with a title, body, and action buttons; it can only be written in TooltipBox's tooltip slot."
+  gotchas:
+    - text: "It is also a `TooltipScope` extension function, and its three caretShape limitations are exactly the same as PlainTooltip's (no caret by default, Shape is just a switch, only above/below orientations supported)."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:498"
+    - text: "To make it \"stay until the user acts\" you must do both: use `rememberTooltipState(isPersistent = true)` for state, and pass focusable = true to TooltipBox. Doing only the former means clicking outside won't close it; doing only the latter means one popped by a touch long-press still doesn't time out (see TooltipBox), but it disappears once the mouse moves away."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:219"
+  visual:
+    max_width: "320.dp"
+    corner_radius: "16.dp"
+    inside_margin: "PaddingValues(all = 16.dp)"
+    action_button: "corner radius 8.dp, inner padding horizontal 12.dp / vertical 6.dp"
+    caret_size: "DpSize(16.dp, 8.dp), only Above/Below take effect"
+  state: "No state of its own; persistence is decided by the external TooltipState(isPersistent). When persistent, dismiss() actively cancels the suspended show coroutine."
+  m3: "Corresponds to material3.RichTooltip (the title/action/text three-slot structure is consistent). Differences are the same as PlainTooltip: the caret is just a switch, no elevation parameter; also M3's RichTooltip more commonly defaults to a persistent + focusable combination, while Miuix needs it configured by hand."
+
+RichTooltipBox:
+  summary: "A convenience wrapper around RichTooltip — it takes the three content blocks title / text / action directly and internally builds a persistent state and RichTooltip for you."
+  gotchas:
+    - text: "Its state default is `rememberTooltipState(isPersistent = true)`, opposite to TooltipBox's convenience version's `isPersistent = false`. When mixing the two, note that the difference between \"disappears on a tap\" and \"must be closed manually\" comes from here."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:675"
+    - text: "A persistent tooltip does not time out automatically (the timeout branch takes effect only for non-persistent and non-UserInput priority), so using this convenience version means you must give the user a way to close it — an action button, clicking outside (requires focusable), or an explicit state.dismiss()."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:202"
+  visual:
+    inherits_rich_tooltip: "max_width 320.dp / corner_radius 16.dp / inside_margin 16.dp"
+  state: "Internally builds a persistent TooltipState by default, or one can be passed in externally for programmatic show/hide control."
+  m3: "No one-to-one counterpart — M3 has only the single TooltipBox container, and the difference between rich and plain is reflected by which component you put in the tooltip slot. Miuix additionally provides this convenience shell."
+
+rememberTooltipState:
+  summary: "Creates and remembers a tooltip's show/hide state, deciding whether it is a \"brief hint\" or a \"persistent card.\""
+  gotchas:
+    - text: "isPersistent = false (the default) does not mean \"it times out automatically.\" The timeout branch's condition is `!isPersistent && mutatePriority != UserInput`, and all gesture entries use UserInput — so a non-persistent tooltip popped by a touch long-press also doesn't time out; only programmatically calling state.show() (default MutatePriority.Default) consumes that TooltipDuration."
+      severity: "high"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:202"
+    - text: "It remembers by (isPersistent, mutatorMutex) — using an isPersistent that changes with state rebuilds the whole state and loses the current show/hide. Also, the default mutatorMutex is `BasicTooltipDefaults.GlobalMutatorMutex`, which is @ExperimentalFoundationApi; the source shields it internally with @OptIn, but if you pass this value explicitly you need to add @OptIn yourself."
+      severity: "medium"
+      evidence: "miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Tooltip.kt:243"
+  visual: {}
+  state: "Uses remember (not rememberSaveable). Under the same MutatorMutex only one tooltip is globally visible — a new show() preempts and closes the old one. isVisible remains true while the animation hasn't finished, to ensure an interrupted enter can play its exit in reverse."
+  m3: "Corresponds to material3.rememberTooltipState(initialIsVisible, isPersistent, mutatorMutex), with basically identical signature and semantics. The difference is that Miuix's implementation forks from foundation's BasicTooltipState and restores the M3 behavior of \"a persistent one is not closed when the mouse leaves the anchor.\""
+
+SnackbarHostState:
+  summary: "The state holder for Snackbar (package top.yukonga.miuix.kmp.basic), passed to SnackbarHost(state = …). The display entry is the member function suspend fun showSnackbar(message: String, actionLabel: String? = null, withDismissAction: Boolean = false, duration: SnackbarDuration = SnackbarDuration.Short): SnackbarResult; there are also the suspend newestSnackbarData() / oldestSnackbarData()."
+  gotchas:
+    - text: "showSnackbar suspends until this Snackbar is closed before returning (internally result.await()), so it must be called inside the scope.launch { } of a rememberCoroutineScope(); calling it twice in a row in the same coroutine means the second one appears only after the first disappears."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:183-228
+    - text: "SnackbarDuration is not a Material3 enum but a sealed interface: the three data objects Short, Long, Indefinite, plus Custom(durationMillis: Long) that can specify a millisecond count."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Snackbar.kt:82-91

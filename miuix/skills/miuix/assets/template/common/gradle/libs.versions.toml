@@ -1,0 +1,35 @@
+[versions]
+# @if:android
+agp = "9.4.1"
+# @endif
+kotlin = "2.4.20"
+# @if:kmp
+compose-multiplatform = "1.12.0" # matches the version miuix 0.9.4 was built with; 1.12.1 warns about a version mismatch on wasm
+# @endif
+miuix = "0.9.4"
+# @if:android
+activity-compose = "1.13.0"
+# @endif
+
+[libraries]
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
+miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference", version.ref = "miuix" }
+miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons", version.ref = "miuix" }
+miuix-nav = { module = "top.yukonga.miuix.kmp:miuix-nav", version.ref = "miuix" }
+# @if:android
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+# @endif
+
+[plugins]
+# @if:android
+android-application = { id = "com.android.application", version.ref = "agp" }
+# @endif
+# @if:kmp
+# @if:android
+android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+# @endif
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
+# @endif
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

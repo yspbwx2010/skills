@@ -1,0 +1,326 @@
+# Theme, color and interaction internals
+MiuixTheme:
+  summary: "The theme root of the entire library, providing Colors / TextStyles / LocalIndication / LocalContentColor / LocalOverscrollFactory downward. Every Miuix component must be wrapped inside it."
+  gotchas:
+    - text: "The two overloads are not equivalent. MiuixTheme(controller=) provides LocalContentColor (= colors.onBackground), while MiuixTheme(colors=)'s CompositionLocalProvider does not include it. And the default value of LocalContentColor is Color.Black, so the intuitive form MiuixTheme(colors = darkColorScheme()) draws all Text/Icon as black on a dark background. To use the colors overload you must add another layer yourself: CompositionLocalProvider(LocalContentColor provides colors.onBackground)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/MiuixTheme.kt:62
+    - text: "The same omission also affects LocalColorSchemeMode: the colors overload does not provide it, and its default value is null, so under the colors overload MiuixTheme.colorSchemeMode is always null and MiuixTheme.isDynamicColor is always false -- code that relies on this check to decide whether to take the dynamic-color branch silently takes the wrong branch."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/ThemeController.kt:266
+    - text: "Not wrapping in MiuixTheme still compiles, runs, and does not error: LocalColors is staticCompositionLocalOf { lightColorScheme() }. Forgetting to wrap the theme manifests as \"the whole page is light in dark mode\" rather than a crash or blank screen, making it hard to trace back to \"forgot to wrap the theme\"."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:618
+    - text: "Both overloads unconditionally inject LocalOverscrollFactory = MiuixOverscrollFactory, meaning that under MiuixTheme all Compose scrollable components already have Miuix bounce built in. Adding Modifier.overScrollVertical() to a LazyColumn at this point stacks two independent offsets and springs, adding the displacements and consuming the velocity twice. Choose one: either rely on the theme alone, or pass overscrollEffect = null to the scrollable component and then use the modifier."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/MiuixTheme.kt:39
+    - text: "ThemeController is named controller, but all seven properties are val (the file only imports getValue, not setValue) and there is no way to modify it after construction. remember { ThemeController(mode) } freezes the theme mode permanently; switching light/dark requires rebuilding the ThemeController instance (e.g. remember(mode) { ThemeController(mode) }, or simply not remembering it)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/ThemeController.kt:226
+    - text: "MiuixTheme uses a keyless remember to create a permanently identity-stable Colors copy, then writes the latest values back into it in place on every recomposition. There are two consequences: MiuixTheme.colorScheme is a mutable object that quietly changes value in your hands and cannot be used as a snapshot cache; and remember(colors) { ... } keyed on Colors never re-executes because the reference never changes."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/MiuixTheme.kt:30
+  state: "It holds no business state itself. The theme state lives in ThemeController (immutable, switched by rebuilding the instance) or is held by the caller as Colors. MiuixTheme internally remembers an identity-stable copy of Colors/TextStyles and writes back slot-by-slot with updateColorsFrom/updateTextStylesFrom on every recomposition; because Color uses structuralEqualityPolicy, no recomposition is triggered when the value has not changed."
+  m3: "Corresponds to androidx.compose.material3.MaterialTheme. Differences: MiuixTheme additionally provides LocalIndication (MiuixIndication) and LocalOverscrollFactory, which M3 does not touch; M3's MaterialTheme has only one overload and its ColorScheme is an @Immutable data holder, while Miuix's Colors is a mutable object and the two overloads have different capabilities; MiuixTheme does no tonal elevation and has no shapes slot."
+
+lightColorScheme:
+  summary: "Constructs Miuix's light color table (all color slots have Xiaomi-style defaults), passed to MiuixTheme(colors=) or ThemeController(lightColors=)."
+  gotchas:
+    - text: "Colors is a plain class, not a data class, and has no equals/hashCode/toString. Calling lightColorScheme() twice yields two instances that are never equal, so remember(lightColorScheme()) { ... } re-executes on every recomposition; to override individual colors you should call it once and remember the result, or use Colors.copy(...)."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:68
+    - text: "All disabledXxx slots are pre-flattened opaque solid colors (e.g. disabledPrimary = 0xFFC2D9FF), not foreground colors with alpha. After replacing background/surface, these disabled colors do not adapt along with them and need to be recomputed manually."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:350
+    - text: "The light primary is 0xFF3482FF and the dark primary is 0xFF277AF7 -- the two schemes are not a lightness flip of the same hue value; every color slot was tuned independently. When doing brand recoloring you cannot just change one primary and expect the dark scheme to derive automatically."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:342
+  visual:
+    primary: "#3482FF (Xiaomi blue)"
+    onPrimary: "Color.White"
+    error: "#E94634"
+  state: "A pure factory function, stateless. Each call creates a new Colors instance; do not inline it as a remember key inside composition."
+  m3: "Corresponds to material3's lightColorScheme(). The slot system is different: Miuix names slots by control purpose (disabledPrimaryButton / disabledPrimarySlider / sliderKeyPoint / sliderBackground / windowDimming / dividerLine), while M3 uses role triples. Miuix has no tertiary (only the tertiaryContainer family), no inverseSurface/inversePrimary/scrim/surfaceTint, so the two cannot be mapped to each other directly."
+
+darkColorScheme:
+  summary: "Constructs Miuix's dark color table, with slots that map one-to-one to lightColorScheme, passed to MiuixTheme(colors=) or ThemeController(darkColors=)."
+  gotchas:
+    - text: "MiuixTheme(colors = darkColorScheme()) directly is the easiest trap to fall into: that overload does not provide LocalContentColor, whose fallback value is Color.Black, so all text and icons on the dark background are black. Either switch to MiuixTheme(controller = ThemeController(...)), or supply LocalContentColor yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/ContentColor.kt:21
+    - text: "The dark scheme's primary is 0xFF277AF7, a value tuned independently from the light 0xFF3482FF; error/errorContainer etc. are the same. When customizing the theme you must give both schemes explicitly, not just override one."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:452
+    - text: "Same as lightColorScheme: Colors has no equals, two calls yield unequal instances, so do not inline darkColorScheme() into a remember key."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/Colors.kt:68
+  visual:
+    primary: "#277AF7"
+    error: "#F12522"
+  state: "A pure factory function, stateless, same as lightColorScheme."
+  m3: "Corresponds to material3's darkColorScheme(). Same slot differences as lightColorScheme; additionally, M3's dark scheme applies surface tonal elevation by default, while Miuix has no such mechanism and expresses hierarchy only through the three explicit slots surfaceContainer/High/Highest."
+
+defaultTextStyles:
+  summary: "Constructs Miuix's 14 text-style slots, passed to MiuixTheme(textStyles=); Miuix's Text uses the main one by default."
+  gotchas:
+    - text: "The 14 default styles set only fontSize (paragraph additionally sets lineHeight, subtitle additionally sets fontWeight) and contain no color at all. The doc's claim that \"style color comes from onBackground\" is wrong -- color is resolved in Text via the chain color parameter -> style.color -> LocalContentColor, unrelated to TextStyles."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:146
+    - text: "None of the 14 styles set a fontFamily, and there is no global font entry point in the library. To change the global font you can only put fontFamily into all 14 slots, e.g. defaultTextStyles(main = ..., paragraph = ..., ...) passing them one by one."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:114
+    - text: "All 14 properties of TextStyles are internal set, so after obtaining MiuixTheme.textStyles you cannot modify it in place (it does not compile). There is only one modification path: construct a new defaultTextStyles(...) and pass it to MiuixTheme."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:52
+    - text: "The private default styles are all get() = TextStyle(...) computed properties, so every call to defaultTextStyles() creates 14 new TextStyle objects. Do not inline it frame-by-frame inside composition."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:147
+    - text: "LocalTextStyles is read only by Miuix's own Text and does not affect BasicText or material3's Text. When mixing the two UI libraries, font sizes are not automatically unified."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/theme/TextStyles.kt:250
+  visual:
+    main: "17.sp (the default style of Miuix Text)"
+    paragraph: "17.sp + lineHeight 1.2em (the only slot with a line height)"
+    body1: "16.sp"
+    body2: "14.sp"
+    button: "17.sp"
+    footnote1: "13.sp"
+    footnote2: "11.sp"
+    headline1: "17.sp"
+    headline2: "16.sp"
+    subtitle: "14.sp + FontWeight.Bold (the only slot with a font weight)"
+    title1: "32.sp"
+    title2: "24.sp"
+    title3: "20.sp"
+    title4: "18.sp"
+  state: "A pure factory function. The returned TextStyles internally holds 14 MutableState (internal set), updated in place by MiuixTheme to keep instance identity stable. The caller does not need to remember it, as MiuixTheme already remembers it internally."
+  m3: "Corresponds to material3's Typography. M3 has 15 display/headline/title/body/label slots each with fontWeight/lineHeight/letterSpacing fully specified; Miuix gives only fontSize, and the slot names (main/paragraph/footnote/subtitle) are a different set. material3's LocalTextStyle and Miuix's LocalTextStyles do not interoperate."
+
+platformDynamicColors:
+  summary: "An expect/actual function that returns the current platform's dynamic-color Colors. ThemeController calls it when in a Monet* mode and keyColor == null."
+  gotchas:
+    - text: "The Android implementation has no remember anywhere. MiuixTheme calls controller.currentColors() on every recomposition, so under MonetSystem + keyColor == null (the Material You default usage recommended by the doc), every recomposition performs one Settings.Secure ContentResolver IPC, one JSONObject parse, and a full MaterialKolor scheme generation. The outer updateColorsFrom diffs the result so it does not blow up recomposition, but the computation is wasted, and MiuixTheme usually wraps the whole app. When calling it yourself, always wrap it in a remember."
+      severity: high
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/theme/DynamicColors.android.kt:29
+    - text: "The actual on non-Android platforms (desktop / iOS / macOS / wasm / js) is only one line, monetSystemColors(dark), which uses the hard-coded seed color 0xFF6750A4 (the Material baseline purple) + TonalSpot + Spec2021 and reads no system colors at all. Android < 31 also falls to the same path. So \"cross-platform dynamic color\" is actually only truly dynamic on Android 31+."
+      severity: high
+      evidence: miuix-ui/src/skikoMain/kotlin/top/yukonga/miuix/kmp/theme/DynamicColors.skiko.kt:9
+    - text: "The Android implementation has an unconditional Log.d (with string interpolation) left in production code, executed once per recomposition alongside the item above."
+      severity: low
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/theme/DynamicColors.android.kt:30
+    - text: "In the fallback path that reads system_accent/system_neutral resources (which may be taken from SDK >= 31; on 33/34 it also falls here whenever theme_customization_overlay_packages cannot be read, and the path further branches internally on SDK >= 34), error / onError / errorContainer / onErrorContainer are hard-coded M3 baseline red (0xFFB3261E / 0xFFFFFFFF / 0xFFF9DEDC / 0xFF410E0B) and do not follow the wallpaper. Only when theme_customization_overlay_packages is read successfully and colorsFromSeed is taken (requiring Android 33+) are the error colors derived from the seed color."
+      severity: low
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/theme/DynamicColors.android.kt:207
+    - text: "It is @Composable, and the Android implementation reads LocalContext, so it cannot be called outside composition (ViewModel, initialization code)."
+      severity: low
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/theme/DynamicColors.android.kt:27
+  state: "Stateless, re-reading the platform and recomputing on every call. The caller (ThemeController.currentColors) does not cache this branch either -- only the keyColor != null branch has a remember."
+  m3: "Corresponds to androidx.compose.material3.dynamicLightColorScheme/dynamicDarkColorScheme. Differences: the official version is an ordinary function (Context parameter) and the caller decides when to remember; the Miuix version is @Composable with no internal caching. The official version exists only on Android 31+, while the Miuix version is a KMP expect/actual that degrades to a fixed seed color on other platforms rather than being unavailable at compile time."
+
+Color.toHsv:
+  summary: "Converts a Compose Color to human-scale HSV (h 0..360, s/v 0..100), with Hsv.toColor(alpha) to convert back. The whole top.yukonga.miuix.kmp.color package has zero coverage in the official docs."
+  gotchas:
+    - text: "The two scales differ by a factor of 100. The extension function Color.toHsv() returns s/v as 0..100, while the underlying Transforms.colorToHsv() returns 0..1; feeding Transforms' output into the Hsv(...) constructor gives an almost fully black color, and the reverse gets clamped to 100 by coerceIn. Confirm the scale before mixing the two layers."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/api/Extensions.kt:25
+    - text: "Before conversion the channels are truncated to 8-bit integers using (color.red * 255).toInt() (floor, not rounding), so color.toHsv().toColor() does not round-trip exactly, off by at most 1/255. For a lossless round-trip do not take this path."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:173
+    - text: "alpha is completely discarded: toHsv() does not read color.alpha, and Hsv.toColor()'s alpha defaults to 1f. A semi-transparent color becomes opaque after a round-trip, so you must pass the alpha back yourself."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/Hsv.kt:16
+    - text: "The related OkHsv has no Color.toOkHsv() extension function (you can only call Transforms yourself), and OkHsv.toColor() forwards h/s/v as-is to Transforms.okhsvToColor -- which expects a 0..1 scale, inconsistent with the convention of the three classes Hsv/OkLab/OkLch that all divide by 100 first. Filling OkHsv per the KDoc's 0..360/0..100 gives the wrong color."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/OkHsv.kt:16
+  state: "A pure function, stateless. Hsv is a data class with equals, so it can safely be used as a remember key or placed in State."
+  m3: "No counterpart. material3 provides no color-space conversion; the platform's android.graphics.Color.colorToHSV exists only on Android and uses a 0..1 scale for s/v, so it cannot be substituted directly."
+
+Color.toOkLab:
+  summary: "Converts a Compose Color to human-scale OkLab (l 0..100, a/b -100..100), used for perceptually uniform lightness/chroma adjustments, then converted back with OkLab.toColor()."
+  gotchas:
+    - text: "The scale is custom: a/b's -100..100 maps to OkLab's native -0.4..0.4, and Transforms.colorToOkLab() is what returns the native scale. Mixing the two layers is off by a factor of 250."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/api/Extensions.kt:16
+    - text: "All three components l/a/b are hard-clamped by coerceIn. Colors outside the typical sRGB range (a/b absolute value over 0.4) are silently clamped, do not round-trip faithfully, and give no information about \"how far out of range\" they were."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/api/Extensions.kt:17
+    - text: "alpha discarded: toOkLab() does not read color.alpha, and OkLab.toColor() defaults alpha = 1f. A semi-transparent color becomes opaque after a round-trip."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/OkLab.kt:16
+    - text: "The input is unconditionally treated as sRGB: the underlying code takes color.red/green/blue directly for the matrix transform without any color-space conversion. Passing a Color with a non-sRGB ColorSpace (such as DisplayP3) gives a wrong result without erroring."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:117
+  state: "A pure function, stateless. OkLab is a data class."
+  m3: "No counterpart. material3 internally uses HCT (via MaterialKolor's Hct), a different perceptual color space from OkLab, and the values are not interchangeable."
+
+Color.toOkLch:
+  summary: "Converts a Compose Color to human-scale OkLCh (l 0..100, c 0..100, h 0..360 degrees), used for operations like \"keep lightness, only shift hue\"; converted back with OkLch.toColor()."
+  gotchas:
+    - text: "chroma is clamped twice. The underlying Transforms.colorToOklch first clamps c into 0..0.4, then the extension function multiplies by 100/0.4 -- so any highly saturated color whose native chroma exceeds 0.4 comes out as c == 100, and different highly saturated colors get the same c value, indistinguishable."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/core/Transforms.kt:126
+    - text: "The scales are inconsistent, and the conversion factors of the two components differ: the extension function returns l/c both as 0..100, while Transforms.colorToOklch returns l as 0..1 (off by 100x, `lch[0] * 100f`) and c as 0..0.4 (off by 250x, `lch[1] / 0.4f * 100f`). Feeding Transforms' raw output directly into OkLch(...) gives an almost fully black and colorless color."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/api/Extensions.kt:33
+    - text: "alpha discarded: toOkLch() does not read color.alpha, and OkLch.toColor() defaults alpha = 1f."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/OkLch.kt:16
+    - text: "h has already been %360'd and negative-corrected in Transforms, and OkLch.toColor() does it again -- so passing an h over 360 or negative is safe and does not error, but do not expect it to preserve turn-count information (e.g. crossing 360 jumps abruptly during a hue-interpolation animation)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/color/space/OkLch.kt:19
+  state: "A pure function, stateless. OkLch is a data class."
+  m3: "No counterpart, for the same reason as Color.toOkLab."
+
+folmeSpring:
+  summary: "Constructs a Compose SpringSpec from Folme-style two parameters (damping ratio + response time in seconds); all animations in the library go through it, so use it rather than spring() when you want your own animation to match the Miuix feel."
+  gotchas:
+    - text: "response is not stiffness. The conversion is stiffness = (2*PI/response)^2, and the smaller the response the faster. folmeSpring(damping = 1f, response = 0.4f) gives a stiffness of about 247, much softer than Compose spring()'s default 1500; putting a familiar stiffness value (e.g. 1500) directly into response gives a stiffness of about 1.75e-5, and the animation looks completely still."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/anim/MiuixEasing.kt:24
+    - text: "The generic T can only be inferred from visibilityThreshold or the expected type. A form like val spec = folmeSpring(1f, 0.3f) with no expected type does not compile (Not enough information to infer type variable T); you must write folmeSpring<Float>(1f, 0.3f). The library's TopAppBar is written this way."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/anim/MiuixEasing.kt:19
+    - text: "visibilityThreshold defaults to null, taking the framework's default displacement threshold, so the spring's exponential-decay long tail runs dozens of extra frames of recomposition. Only NavigationRail in the whole library passes 0.001f. It is worth passing an explicit threshold for high-frequency animations."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/NavigationRail.kt:595
+  visual:
+    press-in: "damping 1.0 / response 0.2"
+    press-out: "damping 0.95 / response 0.35"
+    hover-in: "damping 1.0 / response 0.6"
+    hover-out: "damping 0.96 / response 0.2"
+    dialog-show-hide: "damping 0.9 / response 0.3"
+    bottom-sheet: "damping 0.9 / response 0.38"
+  state: "A pure function returning an immutable SpringSpec. It can (and should) be placed in a top-level private val for reuse, as the library's MiuixIndication does, without needing remember."
+  m3: "No counterpart -- it is just a parameter-conversion wrapper around androidx.compose.animation.core.spring(), turning (dampingRatio, stiffness) into (damping, response). Note that the hand-written SpringEngine/SpringMath in SpringUtils.kt is a separate path dedicated to overscroll, unrelated to folmeSpring, and its parameters do not match either."
+
+Modifier.pressable:
+  summary: "A trimmed-down version of clickable that handles only press appearance (indication lifecycle + InteractionSource management + role/disabled semantics); it has no click callback, and the click behavior must be layered separately with clickable/combinedClickable/toggleable."
+  gotchas:
+    - text: "The first parameter interactionSource has no default value, so Modifier.pressable() does not compile (reports No value passed for parameter interactionSource) -- the official doc example is written this way. To use a node-internal lazily-built source you must explicitly write Modifier.pressable(interactionSource = null)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Pressable.kt:86
+    - text: "\"SinkFeedback is the default effect\" is wrong. The indication default value is null, taking the \"no indication needed\" fast path inside pressableWithIndicationIfNeeded, resulting in no visual feedback at all. For the sink effect you must explicitly pass indication = SinkFeedback()."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Pressable.kt:87
+    - text: "The KDoc line \"By default, indication from LocalIndication will be used\" was copied wholesale from Compose's clickable and does not hold for pressable -- nothing in the whole file reads LocalIndication (that import only serves the KDoc link). Do not infer behavior from the KDoc."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Pressable.kt:75
+    - text: "The semantics set only role and disabled, with no onClick, no keyboard-Enter trigger, and no accessibility click action. A control made with only pressable is completely inoperable under TalkBack. The library's three call sites all additionally layer combinedClickable(Card) / triStateToggleable(Checkbox) / selectable(RadioButton) to supply behavior."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Pressable.kt:352
+    - text: "delay defaults to 150ms before emitting PressInteraction.Press (to prevent a flicker when a press immediately turns into a scroll). The library's Card / Checkbox / RadioButton all pass delay = null to get an instant press state. To have feedback the instant you press you must explicitly pass delay = null. A fast tap does not lose feedback -- Press+Release are emitted together on release -- but it lights up 150ms late."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Pressable.kt:145
+  state: "A stateless modifier. When interactionSource is passed null, the node lazily builds one internally and clears it on onDetach (the press is not observable externally); to observe the press externally with something like collectIsPressedAsState, you must remember { MutableInteractionSource() } yourself and pass it in, and pass the same instance to the clickable layered on top."
+  m3: "The counterpart is foundation's Modifier.clickable (not anything in material3). Differences: it removes onClick, keyboard trigger, and accessibility click action; it adds a delay parameter; and the default indication is null rather than LocalIndication.current. The design intent is to separate \"appearance\" from \"behavior\", letting a Card layer an outer pressable(TiltFeedback) + inner combinedClickable with two sets of feedback -- something a single clickable(indication=) cannot do."
+
+Modifier.overScrollVertical:
+  summary: "Adds Folme-style boundary bounce (a damping curve + a critically-damped spring) to a vertically scrollable container. It is a thin wrapper around overScrollOutOfBound(isVertical = true)."
+  gotchas:
+    - text: "Under MiuixTheme it stacks with the theme-injected MiuixOverscrollFactory rather than replacing it -- two independent offsets and springs run at once, adding displacement and consuming velocity twice. The correct usage is to pass overscrollEffect = null to the scrollable component, as the library's TabRow does. This contract appears in the docs only as a single line of code comment."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:169
+    - text: "isEnabled is a lambda parameter but is evaluated immediately (called synchronously in the composable's composition scope), not lazily. Reading snapshot state inside the lambda (e.g. listState.canScrollForward) causes the calling composable to recompose wholesale and rebuild the entire Modifier chain when scrollability flips; when it returns false, even clipToBounds is not added."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:92
+    - text: "Bounce accumulates only within a \"press / trackpad pan\" gesture session: PointerEventType.Scroll (wheel) only follows the current session state and does not open its own session, so mouse wheel and keyboard scrolling pass through as-is without bounce, and desktop macOS trackpad also arrives as wheel events -- so on desktop you see no effect in most cases, and this is not a bug. Since 0.9.4, any pointer press (including mouse) counts as opening a session, so a custom mouse drag can also bounce; previously mouse press was explicitly excluded. Standard Compose scrollable components do not respond to mouse drag themselves, so this change is invisible for ordinary lists."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:165
+    - text: "The damping range scrollRange takes the window size (LocalWindowInfo.containerDpSize.height), not the height of the modified component itself. When attached to a small control, the bounce amplitude is still computed against the whole window height, and the feel is on the soft side."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:235
+    - text: "The modifier unconditionally adds a clipToBounds() layer first, so content cannot be drawn beyond the component's bounds. Watch out in scenarios with shadows/glow that need overflow drawing."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:95
+  state: "Stateless externally. The internal OverscrollNode's offset is an ordinary Float that bypasses snapshots (invisible to Compose, triggering re-placement manually via invalidatePlacement); the only channel broadcast externally is the global LocalOverScrollState.isOverScrollActive, whose setter is internal set, so the outside can only read it."
+  m3: "foundation's official entry point is Modifier.overscroll(rememberOverscrollEffect()). overScrollVertical does not implement the OverscrollEffect interface but implements its own NestedScrollConnection + LayoutModifierNode, so it cannot be passed to a LazyColumn's overscrollEffect parameter, nor composed with the official Modifier.overscroll -- to use the official interface, use MiuixOverscrollEffect()."
+
+Modifier.overScrollHorizontal:
+  summary: "Adds the same set of Folme bounce to a horizontally scrollable container. It is a thin wrapper around overScrollOutOfBound(isVertical = false)."
+  gotchas:
+    - text: "The problem of stacking with the theme-injected MiuixOverscrollFactory is exactly the same as the vertical version, and horizontally scrollable components must also pass overscrollEffect = null. TabRow's two internal LazyRows both pass it explicitly."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TabRow.kt:308
+    - text: "Modifier.scrollEndHaptic() handles only the vertical axis (reads only available.y / consumed.y), so adding it to a horizontal list is a silent no-op. Horizontal scrolling to the boundary gets no haptic feedback, and there is no error either."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/ScrollEndHaptic.kt:60
+    - text: "The damping range takes the window width containerDpSize.width, not the component's own width. On a narrow horizontal item list the bounce amplitude is on the large side."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:237
+    - text: "Attaching both overScrollVertical() and overScrollHorizontal() to the same component creates two entirely independent nodes (each with its own clipToBounds layer and its own spring), not a single two-axis implementation. For two axes use the theme-injected MiuixOverscrollEffect, which itself handles X/Y independently."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:64
+  state: "Same as overScrollVertical."
+  m3: "Same as overScrollVertical."
+
+Modifier.overScrollOutOfBound:
+  summary: "The real implementation of the bounce; overScrollVertical/overScrollHorizontal are just its two wrappers. The only reason to use it directly is when the direction is decided by a variable."
+  gotchas:
+    - text: "LocalOverScrollState is compositionLocalOf { OverScrollState() }, and nowhere in the whole repository provides it -- the default factory's result is cached on this top-level CompositionLocal object, effectively a process-level singleton. Consequences: when any one list on screen goes out of bounds, all PullToRefresh see isOverScrollActive == true; in multi-Scaffold / multi-window scenarios two unrelated lists' overscroll states pollute each other. isOverScrollActive's setter is internal set, so the outside cannot correct it manually. To isolate it you can only do CompositionLocalProvider(LocalOverScrollState provides OverScrollState()) yourself."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:482
+    - text: "The accompanying cleanup is done in reverse order: MiuixOverscrollEffectNode.onDetach first sets effect.getOverScrollState to null, and only the next line calls effect.resetAll(), while resetAll clears isOverScrollActive using exactly that getter, so it inevitably short-circuits. After a list that is out of bounds is removed from composition (e.g. switching tabs), the global isOverScrollActive remains true, and the immediately following pull-to-refresh fails directly until the next scroll of any kind corrects it. This is a window-of-time bug, not a permanent one, but \"pull to refresh immediately after switching tabs\" is a very easy path to hit."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/OverscrollFactory.kt:379
+    - text: "isEnabled() is evaluated immediately at modifier construction, and when it returns false the whole modifier (including clipToBounds) is not added. The lambda parameter makes it look like lazy evaluation, but it is not."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:92
+    - text: "nestedScrollToParent = false only blocks forwarding \"within a gesture session\". Delta from non-gesture sources (mouse wheel etc. where source != UserInput) and delta while PullToRefresh is active are still unconditionally forwarded to the ancestor; this parameter cannot stop that."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:321
+    - text: "The modifier version's applyDrag has no scrollRange == 0 guard, while the Factory version does (OverscrollFactory.kt:133 / :141's if (delta == 0f || scrollRangeH == 0f) return and its Y-axis version). When scrollRange is 0 it computes 0f/0f = NaN and passes it all the way to translationY, breaking the layer transform. The asymmetric guards between the two implementations are themselves a signal."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/Overscroll.kt:277
+  state: "Stateless externally. The cooperative state lives on two CompositionLocals: LocalOverScrollState (a process-level singleton, see above) and LocalPullToRefreshState (provided normally by PullToRefresh). Because PullToRefresh's connection is attached at the outer layer, the isOverScrollActive it reads is always the value written by the previous event -- a deliberately accepted one-frame-delayed cooperation."
+  m3: "No direct counterpart. foundation's equivalent concept is OverscrollEffect + Modifier.overscroll, but this modifier takes its own path of NestedScrollConnection + LayoutModifierNode and does not interoperate with the official interface."
+
+Modifier.scrollEndHaptic:
+  summary: "Gives one haptic feedback when a scroll flings to the boundary. Attach it to a scrollable container's Modifier (the library example writes it before overScrollVertical)."
+  gotchas:
+    - text: "It supports only the vertical axis. onPreScroll and onPostFling read only available.y / consumed.y, and the internal state enum only has TopBoundaryHit / BottomBoundaryHit, so available.x / consumed.x are never read. Attaching it to a LazyRow or any horizontal scroll is a silent no-op -- no error, no warning, and neither the modifier name nor the docs have any direction qualifier."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/ScrollEndHaptic.kt:60
+    - text: "The trigger is attached only to onPostFling, with no onPostScroll path. Slowly dragging to the end (producing no fling) never vibrates; only a fast fling to the end vibrates. Meanwhile the neighboring Overscroll specifically adds a bounce for \"session ended but no fling\", so the same \"reach the boundary\" action produces the inconsistency of \"there is a bounce but no haptic\"."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/ScrollEndHaptic.kt:68
+    - text: "The trigger also has two undocumented thresholds: |available.y| must be greater than 1f, and |consumed.y| must be greater than or equal to 25f. A slight boundary contact does not vibrate."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/ScrollEndHaptic.kt:71
+    - text: "The default feedback type is HapticFeedbackType.TextHandleMove (the text-handle-drag level), not LongPress. For a more pronounced vibration you must pass it explicitly."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/ScrollEndHaptic.kt:125
+  state: "The node internally holds a three-state enum (Idle / TopBoundaryHit / BottomBoundaryHit), set on hitting a boundary, reset only after scrolling more than 1px from the boundary toward the content, and zeroed on onDetach. Completely stateless and callback-free externally."
+  m3: "No counterpart. Neither foundation nor material3 provides scroll-boundary haptics; the only official near-equivalent is some built-in haptics of LazyList since Compose 1.9, with different semantics."
+
+collectIsHeldDownAsState:
+  summary: "Subscribes to HoldDownInteraction on an InteractionSource and returns a State of \"whether it is in the hold-down state\". hold-down means \"kept in a pressed state because a menu/dropdown has popped up\", not an ordinary press."
+  gotchas:
+    - text: "The two Interactions HoldDown/Release are emitted only by the internal HoldDownObserver, which is driven by the holdDownState: Boolean parameter of Card / IconButton / BasicComponent. If you remember a MutableInteractionSource yourself and pass it to some other component, this State is always false -- unless you emit(HoldDownInteraction.HoldDown()) into the source yourself. The correct usage is to pass the same interactionSource to both the above components and this function, and control holdDownState yourself."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/interfaces/HoldDownInteraction.kt:84
+    - text: "Internally it is LaunchedEffect(this), keyed on the InteractionSource instance. If what you pass in is a MutableInteractionSource newly created on every recomposition, the subscription keeps restarting and drops the current hold state. The source passed in must be remembered."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/interfaces/HoldDownInteraction.kt:53
+    - text: "The KDoc text is wrong -- one sentence mentions both selected and focused, two words that are both incorrect (most likely a leftover from copy-editing collectIsFocusedAsState). Do not understand its semantics from the KDoc."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/interfaces/HoldDownInteraction.kt:46
+  state: "Self-held state: internally it remembers a mutableStateOf(false) and a HoldDown list, using counting to support nested/overlapping holds. The caller only needs to ensure interactionSource is remembered. The returned State is definitely false on the first frame, as the subscription is established inside a LaunchedEffect."
+  m3: "Corresponds to foundation's collectIsPressedAsState / collectIsHoveredAsState / collectIsFocusedAsState family, with the same usage. HoldDownInteraction itself is a Miuix-custom Interaction type, with no corresponding concept in foundation/material3."
+
+WindowNavigationEventScope:
+  summary: "An expect/actual composable function that rebinds the handling of back events (predictive back) to the dispatcher of the platform window that hosts the content. You only need to write it by hand when you build your own standalone window host."
+  gotchas:
+    - text: "The library's WindowDialog / WindowBottomSheet / WindowListPopup / WindowCascadingListPopup already wrap this layer automatically. Wrapping it again inside these components' content is redundant (harmless but useless). The only case that truly needs hand-writing is \"a custom standalone window host + a predictive back handler used inside the content\"."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowDialog.kt:96
+    - text: "On Android, if no NavigationEventDispatcherOwner is found in the window's view tree, it silently keeps the inherited value (takes the else branch and calls content() directly), with no error and no downgrade notice. In that case a back handler registered inside is attached to a dispatcher that never receives this window's events, manifesting as \"the back key does nothing\"."
+      severity: medium
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/WindowNavigationEventScope.android.kt:21
+    - text: "owner is cached with remember(view) and re-resolved only when LocalView changes. If the dispatcher owner is attached to the view tree only after the window is created, it keeps using the null read at the start."
+      severity: low
+      evidence: miuix-ui/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/WindowNavigationEventScope.android.kt:18
+    - text: "The actual on non-Android (skiko: desktop / iOS / web) is only one line, content(), a pure pass-through -- because on those platforms dialogs are stacked inside the host window with no window boundary to cross. Do not expect it to do anything on desktop."
+      severity: low
+      evidence: miuix-ui/src/skikoMain/kotlin/top/yukonga/miuix/kmp/utils/WindowNavigationEventScope.skiko.kt:11
+  state: "Stateless. It does only one CompositionLocal override (LocalNavigationEventDispatcherOwner) and holds no mutable state."
+  m3: "No counterpart. material3's Dialog / ModalBottomSheet rely on androidx.activity's BackHandler + LocalOnBackPressedDispatcherOwner, and cross-window owner rebinding is handled internally by Compose's DialogWrapper; Miuix takes the newer androidx.navigationevent system, which is why this explicit scope function is needed."

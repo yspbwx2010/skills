@@ -1,0 +1,8 @@
+# build output if someone builds the bundled template in place
+skills/miuix/assets/template/**/build/
+skills/miuix/assets/template/.gradle/
+skills/miuix/assets/template/.kotlin/
+skills/miuix/assets/template/local.properties
+
+# local Miuix checkout used by the gates
+/.miuix-src

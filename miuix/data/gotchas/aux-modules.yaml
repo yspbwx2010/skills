@@ -1,0 +1,650 @@
+# Auxiliary modules: squircle / blur / shader / nav / core / icons
+
+squircleBackground:
+  summary: "A smooth rounded-corner background that only fills, never clips. To also clip child content at the corners you must use squircleSurface or squircleClip; with this modifier the area outside the corners still paints child content."
+  gotchas:
+    - text: "Using it as a clip. The first sentence of the KDoc states fill-only, descendants are NOT clipped -- child content (images, ripples, child backgrounds) still paints outside the corners, making it look like the rounding did not take effect. To clip child content too, use squircleSurface (fill + clip) or squircleClip (clip only)."
+      severity: high
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:40
+    - text: "Assuming topStart/topEnd flip under RTL. The KDoc for all four parameters says flipped by LocalLayoutDirection, but the entire miuix-squircle module never reads LocalLayoutDirection (grep only hits the KDoc string). The shader path maps by fixed physical position (index 0 is always top-left), while the API<33 fallback path uses a real RoundedCornerShape, which does flip -- so the same component looks different under RTL before and after Android 33. For deterministic behavior, use absoluteSquircleBackground directly."
+      severity: high
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:61
+    - text: "Assuming extension=1.0 gives a standard circular arc. The KDoc says 1.0 matches a circular arc, but extension only enlarges the corner tile size and never changes the control-handle ratio of that cubic Bézier, SQUIRCLE_CONTROL=0.643 (a circular arc needs 0.5523). At e=1.0 the 45° direction is still about 11.6% shallower than a circular arc, and the endpoint curvature is 0.576/r instead of 1/r."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:47
+    - text: "Assuming a larger extension gets closer to a superellipse. The direction is exactly the opposite: the circle-blend threshold is cornerSize > (π/4)·halfMin, and cornerSize = r×extension, so a larger extension blends toward a pure circle sooner. The default Button (r=16dp, height 40dp) at e=1.1 has blendWeight≈0.44 -- 44% is already pure circle; pushing e to 2.0 saturates the weight straight to 1.0 and the squircle component drops to zero."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:406
+    - text: "Using it on every item in a long list. The SquircleShaderBrush constructor calls RuntimeShader(SQUIRCLE_SHADER), and on Android that constructor compiles AGSL on the spot, with no process-level cache at this layer (Skiko has a RuntimeEffect cache, Android does not). The brush is remember(color, tiles) per call site, so 50 Cards = 50 AGSL compilations; a theme-color change rebuilds them all."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:392
+  visual:
+    extension: "Default 1.1 (SquircleDefaults.Extension), clamped to 1.0..2.0"
+    control: "SQUIRCLE_CONTROL = 0.643f, manually kept in lockstep with the build-time baked SDF's control.set(0.643f), with no test guarding it"
+    blend_threshold: "BLEND_THRESHOLD_RATIO = 0.7853982f (π/4); once cornerSize/halfMin exceeds it, blending toward a pure circle begins, reaching a pure circle at 1.0"
+  state: "Stateless. A @Composable modifier; internally rememberSquircleBrush memoizes on (color, four-corner Dp, extension, density); when unsupported it returns null and falls back to Modifier.background(color, RoundedCornerShape(cornerRadius)). Note the fallback uses r without multiplying by extension, so its corners are 10% smaller than the main path, and toggling LocalSquircleEnabled makes the corners visibly jump."
+  m3: "Corresponds to Modifier.background(color, RoundedCornerShape(r)). Difference: M3 goes through Shape/Outline and can be passed to any API that takes a Shape; miuix-squircle exports no Shape implementation, only a Modifier, so it cannot be fed to parameters like Surface(shape=) or drawBackdrop(shape=)."
+
+squircleClip:
+  summary: "Masks child content to a smooth rounded-corner outline. Note it is an alpha mask (BlendMode.DstIn), not a true outline clip."
+  gotchas:
+    - text: "Using it as Modifier.clip(shape). The implementation draws the content and then uses BlendMode.DstIn to multiply the corner alpha to 0, not a stencil/outline clip. The pixels outside the corners were actually drawn, just with alpha=0, and any subsequent non-SrcOver blend can still bring them back; when child content carries its own graphicsLayer(alpha=) or a non-SrcOver blendMode, the result differs from a true clip."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:333
+    - text: "When either side of the node exceeds 2048px it switches to a band path: the content is first recorded into a GraphicsLayer, then replayed with saveLayer in the top and bottom corner bands, while the straight-edge region in between opens no offscreen layer. The dst of DstIn differs between the two paths (a whole-node offscreen layer vs a band-height temporary layer), so results diverge when child content uses a non-SrcOver blend. Also the banding only cuts along the Y axis, so for a 4000×100 ultra-wide node each band's saveLayer width is still 4000px."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:261
+    - text: "RTL parameters do not flip, same as squircleBackground (the KDoc says they flip, the code does not, and the fallback path does flip instead)."
+      severity: high
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:104
+    - text: "Every node wastefully takes a GraphicsLayer. drawWithCache calls obtainGraphicsLayer() unconditionally, but it is only used on the >2048px band path. Button/Card/IconButton all go through the squircleSurface chain, so a single screen has dozens of unrecorded layers."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:269
+  visual:
+    max_offscreen: "MAX_OFFSCREEN_PX = 2048f -- when the node's max(w,h) does not exceed it, the single-offscreen-layer fast path is used; above it, the band path"
+  state: "Stateless. The fallback path is Modifier.clip(RoundedCornerShape(...)), which is a true outline clip and differs semantically from the main path (see above)."
+  m3: "Corresponds to Modifier.clip(RoundedCornerShape(r)). Difference: M3 is an outline clip, this modifier is an alpha mask."
+
+squircleSurface:
+  summary: "The combination of squircleBackground + squircleClip: in a single offscreen layer it both fills the base color and masks the corners. Miuix's Button/Card/IconButton go through it."
+  gotchas:
+    - text: "Inherits all of squircleClip's pitfalls (alpha mask rather than outline clip, 2048px banding, RTL does not flip, wasted GraphicsLayer). The fallback path is clip(RoundedCornerShape(...)).background(color), using the radius without multiplying by extension."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:162
+    - text: "When you want to background-blur a squircle region, squircleSurface and drawBackdrop cannot connect: miuix-squircle exports no Shape, and drawBackdrop's shape parameter only accepts a Shape. You can only wrap another squircleClip around drawBackdrop -- and then drawBackdrop's internal clipping and edge highlight still follow the RoundedCornerShape outline, which does not line up with the outer squircle."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:152
+  visual: {}
+  state: "Stateless."
+  m3: "Corresponds to Modifier.clip(shape).background(color), or M3's Surface(shape=, color=)."
+
+squircleBorder:
+  summary: "A smooth rounded-corner border. A pure Path implementation that needs no shader, but is still gated by the shader capability to keep its fallback consistent with the fill APIs."
+  gotchas:
+    - text: "The border and a same-radius squircleSurface do not coincide at common sizes. The fill goes through the shader with circle blending (the default Button at r=16dp/height 40dp is 44% pure circle), while the border goes through addSquircleRect with no blending logic at all, so the two outlines differ by about 0.021×tile in the 45° direction (a visible offset on a 1dp thin border)."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBorder.kt:49
+    - text: "The two overloads have different fallback paths. The first (width: Dp, color: Color), when isSquircleEnabled()==false, swaps entirely to Modifier.border(width, color, RoundedCornerShape(cornerRadius)); the second (the lambda version) does not swap the modifier but passes squircleEnabled into addSquircleRect to draw a rounded-rectangle border path. The same parameters give visually inconsistent fallbacks across the two overloads."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBorder.kt:36
+    - text: "cornerRadius is the radius of the border's outer edge, not its centerline: internally it draws with cornerRadiusPx - halfStroke and translates the whole thing by translate(halfStroke). To align the border's outer edge with a fill of radius r, pass r directly, do not subtract yourself."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBorder.kt:48
+  visual: {}
+  state: "Stateless. The lambda overload (width: () -> Dp, color: () -> Color) reads its values only inside onDrawBehind, so driving the border with animateDpAsState/animateColorAsState does not trigger recomposition -- prefer it for animated scenarios."
+  m3: "Corresponds to Modifier.border(width, color, RoundedCornerShape(r))."
+
+absoluteSquircleBackground:
+  summary: "absoluteSquircleBackground / absoluteSquircleClip / absoluteSquircleSurface -- parameters are named by physical corner (topLeft/topRight/bottomRight/bottomLeft) and explicitly do not flip with LayoutDirection."
+  gotchas:
+    - text: "On the shader path, the absolute variant and the relative variant produce identical output (the relative variant does not flip to begin with). The only real difference is in the API<33 fallback branch: absolute uses AbsoluteRoundedCornerShape, relative uses RoundedCornerShape (which flips). In other words, the value of the absolute variant is that its fallback path also does not flip, not that it does anything more than the relative variant."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:193
+    - text: "The parameter order is clockwise from top-left: topLeft, topRight, bottomRight, bottomLeft. It maps one-to-one with the relative variant's topStart, topEnd, bottomEnd, bottomStart positions, so under LTR you can just swap names without changing order."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:169
+  visual: {}
+  state: "Stateless, identical to the corresponding relative variant."
+  m3: "Corresponds to AbsoluteRoundedCornerShape with background/clip."
+
+absoluteSquircleClip:
+  summary: "absoluteSquircleBackground / absoluteSquircleClip / absoluteSquircleSurface -- parameters are named by physical corner (topLeft/topRight/bottomRight/bottomLeft) and explicitly do not flip with LayoutDirection."
+  gotchas:
+    - text: "On the shader path, the absolute variant and the relative variant produce identical output (the relative variant does not flip to begin with). The only real difference is in the API<33 fallback branch: absolute uses AbsoluteRoundedCornerShape, relative uses RoundedCornerShape (which flips). In other words, the value of the absolute variant is that its fallback path also does not flip, not that it does anything more than the relative variant."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:193
+    - text: "The parameter order is clockwise from top-left: topLeft, topRight, bottomRight, bottomLeft. It maps one-to-one with the relative variant's topStart, topEnd, bottomEnd, bottomStart positions, so under LTR you can just swap names without changing order."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:169
+  visual: {}
+  state: "Stateless, identical to the corresponding relative variant."
+  m3: "Corresponds to AbsoluteRoundedCornerShape with background/clip."
+
+absoluteSquircleSurface:
+  summary: "absoluteSquircleBackground / absoluteSquircleClip / absoluteSquircleSurface -- parameters are named by physical corner (topLeft/topRight/bottomRight/bottomLeft) and explicitly do not flip with LayoutDirection."
+  gotchas:
+    - text: "On the shader path, the absolute variant and the relative variant produce identical output (the relative variant does not flip to begin with). The only real difference is in the API<33 fallback branch: absolute uses AbsoluteRoundedCornerShape, relative uses RoundedCornerShape (which flips). In other words, the value of the absolute variant is that its fallback path also does not flip, not that it does anything more than the relative variant."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:193
+    - text: "The parameter order is clockwise from top-left: topLeft, topRight, bottomRight, bottomLeft. It maps one-to-one with the relative variant's topStart, topEnd, bottomEnd, bottomStart positions, so under LTR you can just swap names without changing order."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquircleBackground.kt:169
+  visual: {}
+  state: "Stateless, identical to the corresponding relative variant."
+  m3: "Corresponds to AbsoluteRoundedCornerShape with background/clip."
+
+isSquircleEnabled:
+  summary: "A @Composable @ReadOnlyComposable switch query: LocalSquircleEnabled.current && isRuntimeShaderSupported(). Only useful when you need to pass this boolean to the non-Composable Path.addSquircleRect."
+  gotchas:
+    - text: "It does not just read the user switch, it also ANDs in the platform capability. On Android<33 it is always false, even when LocalSquircleEnabled is true. To check user intent alone, read LocalSquircleEnabled.current directly."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/LocalSquircleEnabled.kt:27
+    - text: "LocalSquircleEnabled is a staticCompositionLocalOf, not a compositionLocalOf -- when its value changes, the entire subtree that reads it recomposes, with no fine-grained invalidation. That is correct for a global switch, but do not use it as per-frame changing state."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/LocalSquircleEnabled.kt:18
+  visual: {}
+  state: "Read-only, stateless. Default value true."
+  m3: "No equivalent."
+
+Path.addSquircleRect:
+  summary: "Appends a squircle outline to a Path. The only public API in the module that needs no shader, intended for per-frame path scenarios such as clipPath reveal animations."
+  gotchas:
+    - text: "All size parameters are pixels, not Dp (width/height/cornerRadius: Float). Passing the value 16f from 16.dp directly gives you a 16px corner. Inside DrawScope/CacheDrawScope use cornerRadius.toPx()."
+      severity: high
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquirclePath.kt:49
+    - text: "squircleEnabled defaults to true and does not read the CompositionLocal. It is a plain extension function and cannot read LocalSquircleEnabled, so when the user turns off the global switch or runs on Android<33, this path still draws a squircle while the surrounding modifiers have already fallen back to rounded corners -- you must call isSquircleEnabled() in the composable and pass it in explicitly."
+      severity: high
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquirclePath.kt:54
+    - text: "The squircleEnabled=false fallback branch uses cornerRadius without multiplying by extension, while the squircle branch uses cornerRadius×extension. Toggling the switch makes every corner's visual size jump by 10%."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquirclePath.kt:58
+    - text: "The outline it draws has none of the shader path's circle blending, so at capsule/pill sizes where r approaches halfMin it does not line up with an adjacent squircleSurface/squircleClip (ListPopup's clipPath reveal hits exactly this)."
+      severity: medium
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquirclePath.kt:30
+    - text: "The path is clockwise, starts at (tile, 0) and close()s, with the coordinate origin fixed at (0,0). To draw elsewhere you must translate yourself; the function accepts no offset. When width/height<=0 it silently appends nothing."
+      severity: low
+      evidence: miuix-squircle/src/commonMain/kotlin/top/yukonga/miuix/kmp/squircle/SquirclePath.kt:56
+  visual:
+    tile: "tile = cornerRadius × extension, then clamped to min(w,h)/2; when tile<=0 it degrades to a plain rectangle"
+    handle: "handle = tile × (1 - 0.643) = 0.357 × tile"
+  state: "Stateless, pure Path construction."
+  m3: "Corresponds to Path.addRoundRect(RoundRect(...))."
+
+Modifier.drawBackdrop:
+  summary: "The middle layer of the blur system: a fully controllable background-drawing node where you write the effects block to decide the pipeline. Preset modifiers like textureBlur are thin wrappers over it."
+  gotchas:
+    - text: "The whole node is ANDed with isRuntimeShaderSupported(). The enabled parameter is &&'d with it, so on Android<33 whatever enabled you pass it degrades to a pure pass-through (no layer built, draw calls drawContent directly). So you need not add your own platform check, but do not expect any effect on API<33 either."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:118
+    - text: "Passing progressiveGradient alone is ineffective. The KDoc clearly states it requires a matching progressiveBlur in effects -- when there is no progressiveBlur in the effects block the gradient is silently ignored and effects draws a uniform blur, with no error. Either pass the same gradient on both sides, or just use Modifier.progressiveTextureBlur."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:97
+    - text: "contentBlendMode is a non-null BlendMode, defaulting to SrcOver (not a nullable null). The sentinel value is SrcOver: drawBackdrop internally checks if (contentBlendMode == BlendMode.SrcOver) to take the plain drawContent(). The docs docs/guide/blur.md:417 write it as BlendMode? / default null; passing null fails to compile."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:113
+    - text: "layerBlock is used twice: once as a real Modifier.graphicsLayer applied to this component, and once passed into the node to inverse-transform the backdrop sampling (it only inverts rotationZ/scaleX/scaleY, not translation or rotationX/Y). So do not wrap another graphicsLayer around it doing the same scaling, or it scales twice; 3D rotation also cannot be inverted."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:121
+    - text: "onDrawBackdrop is called twice, in two different coordinate spaces: once on the downsampled recording surface (downscaleFactor of 1 or 2), and once on the progressive blur's full-resolution sharp-end overlay (always 1). The hook cannot get downscaleFactor and can only infer it from DrawScope.size, and the downsampled path additionally wraps a translate(scaledPadding) around it. The library's docs/ and example/ have zero usage samples for it."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:110
+    - text: "highlight is silently skipped on unsupported platforms rather than degrading to a flat-color stroke. HighlightStyle.color's KDoc promises Tint applied when no createShader is available, and createShader's KDoc says Return null to fall back to a flat color stroke, but drawHighlight, after getting null, does ?: return and draws nothing."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/highlight/HighlightDrawing.kt:36
+    - text: "The draw order is fixed: onDrawBehind → blurred background (+ sharp-end overlay) → onDrawSurface → drawContent (per contentBlendMode) → highlight → onDrawFront. The drawBackdrop section of docs/guide/blur.md only covers the four parameters backdrop/shape/effects/highlight, omitting the other 8 and the draw order."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:86
+  visual: {}
+  state: "Stateless host. shape is () -> Shape (re-read every frame, the shape can animate), highlight is (BackdropEffectScope.() -> Highlight?)? (evaluated in the scope, can read size/shape/density and can animate with press progress) -- note that on the third-layer preset modifiers these two are simplified to a plain Shape / Highlight?."
+  m3: "No equivalent. Compose's official Modifier.blur blurs its own content and does not sample the background; third-party libraries like HazeMaterials are the real counterpart."
+
+Modifier.layerBackdrop:
+  summary: "Records the content this composable draws into a LayerBackdrop's GraphicsLayer for drawBackdrop to sample. The capture side, which must be paired with rememberLayerBackdrop."
+  gotchas:
+    - text: "Draw order is part of correctness, yet the API surface gives no hint. It records only in its own draw phase, and the consumer side just takes the already-recorded layer. The subtree with layerBackdrop must be drawn before the blurred component within the same frame (typical structure: a Scaffold's content before its topBar); a reversed order neither errors nor flashes black, it just samples the previous frame's content -- visible only during scrolling/animation."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdropModifier.kt:58
+    - text: "The content is drawn twice: once with drawContent() straight to screen, and once recorded into a GraphicsLayer. This is a fixed per-frame cost, and this modifier has no enabled parameter -- once attached you keep paying. When blur is not needed (user disabled it, platform unsupported) you should branch with an if outside, so that when rememberBlurBackdrop returns null you do not attach it at all."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdropModifier.kt:59
+    - text: "If you forget to attach it, or after the node detaches, the drawBackdrop side silently draws nothing: the first thing LayerBackdrop.drawBackdrop does is layerCoordinates ?: return. The symptom is a blank blur region, with no log or exception."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdrop.kt:81
+  visual: {}
+  state: "No self-held state; it writes the LayoutCoordinates into the passed-in LayerBackdrop and sets it to null on onDetach. Attaching the same LayerBackdrop in two places at once makes them overwrite each other's coordinates."
+  m3: "No equivalent."
+
+rememberLayerBackdrop:
+  summary: "Creates and remembers a LayerBackdrop (a GraphicsLayer snapshot-style background source). The only implementation of the library's Backdrop interface."
+  gotchas:
+    - text: "The default onDraw is just { drawContent() } -- in the recorded layer, wherever the subtree did not draw is transparent. Blur spreads color into the transparent region, producing a visible halo at the edges. The standard practice is to pass onDraw = { drawRect(surfaceColor); drawContent() } to lay down an opaque base color first."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdrop.kt:26
+    - text: "remember keys only on graphicsLayer, and onDraw goes through rememberUpdatedState. So creating a new onDraw lambda each frame does not rebuild the backdrop (this is intentional), but it also means changing onDraw does not trigger a redraw -- rely on the State it reads internally to invalidate itself."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdrop.kt:46
+    - text: "It has no enabled/fallback of its own. When blur is unsupported you should return null at the call site (if (!isRuntimeShaderSupported()) return null) and branch layerBackdrop out with null, otherwise you pay the capture layer's double-draw cost for nothing."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/LayerBackdrop.kt:41
+  visual: {}
+  state: "An @Stable class that internally holds layerCoordinates (mutableStateOf) and offsetResidualX/Y. isCoordinatesDependent is hardcoded to true -- no implementation in the library takes the interface's false branch, and a custom Backdrop that wrongly declares false gets null coordinates and then silently draws nothing."
+  m3: "No equivalent."
+
+Modifier.textureBlur:
+  summary: "A one-line HyperOS frosted-glass preset: the fixed recipe noiseDither → colorControls → blur → blendColors. It is enough for the vast majority of cases."
+  gotchas:
+    - text: "blurRadius is in dp (internally multiplied by density to pixels), whereas the lower-level BackdropEffectScope.blur is in pixels. Mixing the two makes the radius off by a factor of density (3x on a 3x screen)."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/TextureEffect.kt:54
+    - text: "contentBlendMode is a non-null ComposeBlendMode, defaulting to SrcOver. The KDoc of all six overloads says Optional ... null means content draws normally on top (TextureEffect.kt:24/26, 61/63, 99/101, 138/140, 192, 231), and the docs docs/guide/blur.md:417 copied it as BlendMode? / null -- passing null fails to compile. For a foreground blur (content alpha as mask) pass ComposeBlendMode.DstIn."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/TextureEffect.kt:26
+    - text: "The radius is silently clamped to [0, BlurDefaults.MaxBlurRadius] (150dp). Passing a larger value does not error, it just does not get blurrier."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:395
+    - text: "BlurColors is marked @Immutable but contains a List<BlendColorEntry>, and Compose treats List as unstable -- constructing BlurColors(...) directly invalidates the caller on every recomposition. The KDoc itself states you should use the remembered BlurDefaults.blurColors factory."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BlurDefaults.kt:15
+  visual:
+    blur_radius: "BlurDefaults.BlurRadius = 20f (dp)"
+    noise: "BlurDefaults.NoiseCoefficient = 0.0045f; the progressive version defaults to ProgressiveNoiseCoefficient = 0f"
+    max_radius: "BlurDefaults.MaxBlurRadius = 150f (dp)"
+  state: "Stateless. At this layer shape is a plain Shape (not () -> Shape) and highlight is a plain Highlight? (not a scope lambda) -- if you need shape/highlight to animate you must drop down to drawBackdrop."
+  m3: "No equivalent."
+
+Modifier.textureEffect:
+  summary: "The per-axis radius version of textureBlur (blurRadiusX/blurRadiusY independent); all four textureBlur/textureEffect overloads ultimately land on it."
+  gotchas:
+    - text: "TextureEffect.kt contains no logic at all; all 265 lines are overload forwarding. So textureEffect and textureBlur have exactly the same pitfalls (dp units, non-null contentBlendMode, radius clamped to 150dp, BlurColors unstable). To change the recipe order or add a custom pass, you must drop down to drawBackdrop + textureBlurEffect."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/TextureEffect.kt:151
+  visual: {}
+  state: "Same as textureBlur."
+  m3: "No equivalent."
+
+Modifier.progressiveTextureBlur:
+  summary: "Gradient blur: the radius transitions continuously from full to zero along the direction ProgressiveBlur specifies, and the clear end is genuinely full-resolution sharp. Use it for fading frosted-glass top/bottom bars."
+  gotchas:
+    - text: "It passes the gradient to both the progressiveTextureBlurEffect in the effects block and drawBackdrop's progressiveGradient -- neither can be omitted. When hand-rolling with drawBackdrop and you miss either side: passing only progressiveGradient makes the gradient silently ignored and draws a uniform blur; calling only progressiveBlur makes the clear end sample the downsampled layer, so it is soft rather than pixel-sharp."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/TextureEffect.kt:249
+    - text: "noiseCoefficient defaults to ProgressiveNoiseCoefficient = 0f (noise off), unlike textureBlur's 0.0045f. When switching over from textureBlur, if you rely on noise to de-band, pass it explicitly."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/TextureEffect.kt:240
+    - text: "The ProgressiveBlur.Top/Bottom/Left/Right preset names refer to the end where blur is strongest (Top = top edge blurriest, clearing downward), not the gradient direction. The semantics of angle: 0 degrees fades out left→right, 90 degrees fades out top→bottom."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/ProgressiveBlur.kt:31
+    - text: "The clear end's color-grading behavior changes abruptly with radius. The intermediate sigma = max(rX,rY)×0.45×0.4, and when it falls below BOUNDARY_SIGMA[0]=3.5496 exp==0, in which case the whole stack runs at full resolution and the clear end binds directly to the source that has already gone through the pre chain (i.e. colorControls), with the sharp-end overlay skipped; a bit larger and exp>0, so the clear end is instead handled by drawSharpOverlay recording the raw backdrop and only applying the overlay effect, with the pre chain not participating. That works out to a threshold of about 19.7px (about 6.6dp at density 3) -- animating the radius from 6.5dp to 7dp makes the clear end's brightness/contrast/saturation suddenly disappear."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:874
+  visual:
+    gradient_default: "ProgressiveBlur.Top (angle=90, startFraction=0, endFraction=1, curve=1)"
+  state: "Stateless. gradient is an @Immutable data class, and you can animate its startFraction/endFraction/curve directly."
+  m3: "No equivalent."
+
+BackdropEffectScope.blur:
+  summary: "A separable Gaussian blur in the effects DSL. Besides chaining a RenderEffect, it also sets downscaleFactor and padding -- the latter two affect other effects in the chain."
+  gotchas:
+    - text: "The parameter names are radiusX / radiusY (radiusY defaults to radiusX), there is no radius and no edgeTreatment. The docs docs/guide/blur.md:363 write blur(radius = 60f), and the extension table at :381 writes blur(radius, edgeTreatment) -- both parameter names have zero hits across the repo, and edgeTreatment was mistakenly copied from Compose's official Modifier.blur. The Chinese mirror docs/zh_CN/guide/blur.md:358/376 has the same error."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:46
+    - text: "The radius is in pixels, not dp. BackdropEffectScope extends Density, and the KDoc's example is exactly blur(20f * density). Writing blur(20f) directly gives only 6.7dp of blur on a 3x screen -- three times off from Modifier.textureBlur(blurRadius = 20f), which is in dp."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:43
+    - text: "It raises downscaleFactor. A runtimeShaderEffect chained after it receives coords in the downsampled layer's pixel space, so all pixel-unit uniforms (size, padding, corner radius, refraction bandwidth...) must be divided by downscaleFactor yourself, otherwise the geometry runs outside the layer and every sample hits transparent black. This is the biggest cognitive-load leak in this API."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffectScope.kt:109
+    - text: "Order has performance implications: raising padding after blur is safe but re-runs the entire effects block once; setting padding before blur saves that rebuild."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:33
+    - text: "blur(0f) is not zero-cost: when the radius is 0, createBlurEffect returns null and exits early (the `?: return` at :104 in the same file), but padding was already set to 13 beforehand, so the recording surface still gains 13px on each side. During a 0→20 radius animation the first frame wastefully records an extra ring."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:67
+  visual: {}
+  state: "Stateless; it writes the scope's three fields renderEffect / padding / downscaleFactor. On Android<33 it simply returns, with no error."
+  m3: "No equivalent."
+
+BackdropEffectScope.progressiveBlur:
+  summary: "A variable-radius progressive blur. It works alone, but the clear end is only a soft transition of the downsampled layer; only with drawBackdrop(progressiveGradient=) do you get a genuinely pixel-sharp end."
+  gotchas:
+    - text: "The radius is likewise in pixels (radiusX/radiusY), and gradient defaults to ProgressiveBlur.Top. As with blur, you must multiply by density yourself."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:122
+    - text: "When called alone (drawBackdrop was not passed a progressiveGradient), the KDoc clearly states that the intensity→0 end samples the downscaled backdrop (soft, not pixel-sharp) -- visually the clear end goes soft rather than erroring. For true sharpness you must pass the same gradient on both sides."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:114
+    - text: "In composite mode (drawBackdrop was passed a progressiveGradient) this call only registers the target radius and downsampling and does not actually chain a RenderEffect -- and a blendColors immediately after it is also folded into the stack's ramp pass rather than the normal chain. Inserting a custom effect between them behaves counterintuitively."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:133
+  visual: {}
+  state: "Stateless; it writes the scope's padding / downscaleFactor and internal progressive record fields."
+  m3: "No equivalent."
+
+BackdropEffectScope.colorControls:
+  summary: "Pre-blur brightness/contrast/saturation adjustment. In the preset recipe it comes before blur and acts on the raw background."
+  gotchas:
+    - text: "When all three values are default (brightness=0, contrast=1, saturation=1) the whole call is a no-op and does not even build a RenderEffect. To force this pass you must give a non-default value."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffectScope.kt:68
+    - text: "brightness is done in linear (gamma 2.2) space, not a simple linear ColorMatrix offset -- this is to avoid hue shift. So its values cannot be directly compared to M3/ColorMatrix brightness parameters."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffectScope.kt:56
+    - text: "The recipe order is intentional: colorControls before blur (acting on the raw background, avoiding blur smoothing over grading errors), blendColors after blur (as a tint over the result). When assembling your own effects block, moving colorControls after blur gives a different result."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:398
+  visual: {}
+  state: "Stateless; it caches the RenderEffect on the scope keyed by the (brightness, contrast, saturation) triple."
+  m3: "Corresponds to part of ColorFilter.colorMatrix, but M3's version is a linear-space matrix and its brightness introduces hue shift."
+
+BackdropEffectScope.blendColors:
+  summary: "Post-blur multi-layer tint. HyperOS frosted glass's coloring relies on it, with 40+ blend modes (including custom modes such as Lab space)."
+  gotchas:
+    - text: "At most 8 layers (MAX_BLEND_LAYERS = 8), and extra entries are silently dropped -- the KDoc says Extra entries are dropped and the code is minOf(list.size, 8), with no exception and no log."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:26
+    - text: "BlurBlendMode.MiLuminance (203) is dead on the public API: the two uniforms it needs, uLuminanceAmount / uLuminanceValues, are hardcoded to 0f and (0,0,0,0), with no public way to set them. Adding a MiLuminance layer does nothing."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:362
+    - text: "BlurBlendMode.MiSaturation (201) / MiBrightness (202) reuse the BlurColors.saturation / BlurColors.brightness fields -- and in textureBlurEffect's standard recipe those same two fields have already been consumed once by colorControls before the blur. Adding layers of these two modes applies the same value twice (once before blur, once after)."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:360
+    - text: "When the blendColors list is empty the whole call is a no-op. So when BlurColors only set brightness/contrast/saturation but gave no blendColors, calling blendColors(colors) has no effect -- those three values are colorControls's job."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:260
+  visual:
+    max_layers: "MAX_BLEND_LAYERS = 8"
+    mode_ranges: "0-28 standard SkBlendMode (GPU hardware); 100-121 and 200-203 custom modes (go through the runtime shader, need isRuntimeShaderSupported())"
+  state: "Stateless; caches the RenderEffect keyed by the BlurColors value (rebuilding the list every frame still hits the cache)."
+  m3: "No equivalent."
+
+BackdropEffectScope.noiseDither:
+  summary: "Anti-banding noise dithering. It builds no RenderEffect and only writes noiseCoefficient to the scope; the actual application is decided by the draw path."
+  gotchas:
+    - text: "When coefficient <= 0 the whole call is ignored (it does not even write the field). To turn off noise on a chain, passing 0 is enough, no conditional branch needed."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt:246
+    - text: "0.005 is a semantic boundary (NOISE_GRAIN_THRESHOLD): below it, noise is treated as pure anti-banding and folding it into the downsampled stack (capped at 0.009) is enough, skipping the full-resolution round trip; above it, it is treated as deliberate visible grain and runs a full-resolution noise pass. The default 0.0045f falls just below the threshold -- raising it to 0.006 adds an entire full-resolution draw."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/DrawBackdropModifier.kt:72
+  visual:
+    threshold: "NOISE_GRAIN_THRESHOLD = 0.005f; STACK_DITHER_MAX = 0.009f"
+    default: "BlurDefaults.NoiseCoefficient = 0.0045f (uniform blur); BlurDefaults.ProgressiveNoiseCoefficient = 0f (progressive blur)"
+  state: "Stateless; only writes scope.noiseCoefficient."
+  m3: "No equivalent."
+
+rememberDeviceTilt:
+  summary: "Reads the device rotation sensor to feed parallax effects like rememberTiltLight. Only Android has real data."
+  gotchas:
+    - text: "On Desktop / iOS / macOS / Web it always returns DeviceTilt.Zero -- the skiko-side actual is just remember { mutableStateOf(DeviceTilt.Zero) }, one line. The supposed iOS implementation does not exist; it goes through exactly the same skikoMain as Desktop. Any tilt-dependent visual is static on these platforms, with no error."
+      severity: high
+      evidence: miuix-blur/src/skikoMain/kotlin/top/yukonga/miuix/kmp/blur/sensor/DeviceTilt.skiko.kt:12
+    - text: "On Android, when the device has no GAME_ROTATION_VECTOR / ROTATION_VECTOR sensor it also silently stays at Zero (directly return@DisposableEffect onDispose {}), with no fallback to the accelerometer and no queryable availability flag."
+      severity: medium
+      evidence: miuix-blur/src/androidMain/kotlin/top/yukonga/miuix/kmp/blur/sensor/DeviceTilt.android.kt:31
+    - text: "smoothing is the key of the DisposableEffect -- animating it with something like animateFloatAsState repeatedly unregisters/re-registers the sensor and clears the smoothing state (initialized=false), reconverging from scratch each time. To adjust smoothing dynamically, interpolate the State value yourself outside."
+      severity: medium
+      evidence: miuix-blur/src/androidMain/kotlin/top/yukonga/miuix/kmp/blur/sensor/DeviceTilt.android.kt:27
+    - text: "Each call site registers its own SensorEventListener, with no sharing. N tilt-using components on a page means N SENSOR_DELAY_GAME listeners. To reuse, call it once higher up and pass the State down."
+      severity: medium
+      evidence: miuix-blur/src/androidMain/kotlin/top/yukonga/miuix/kmp/blur/sensor/DeviceTilt.android.kt:77
+  visual:
+    smoothing: "Default 0.15f (low-pass alpha; 1.0 = no smoothing)"
+    sensor: "Prefers TYPE_GAME_ROTATION_VECTOR, falls back to TYPE_ROTATION_VECTOR, sampling rate SENSOR_DELAY_GAME"
+  state: "Returns State<DeviceTilt>. The listener registers and unregisters with Lifecycle ON_START/ON_STOP; each unregister resets the smoothing accumulator. pitch/roll are Euler angles (radians), gravityX/gravityY are gravity's projection onto the screen plane (the information Euler angles lose when rotating about the screen normal)."
+  m3: "No equivalent."
+
+rememberTiltLight:
+  summary: "Maps device tilt to a Highlight's light-source position, producing an edge-glow parallax that follows the phone's posture."
+  gotchas:
+    - text: "It memoizes with remember(tilt, ...), and tilt changes with every sensor sample -- so the composable calling it recomposes at the sensor sampling rate (Android SENSOR_DELAY_GAME, roughly 50Hz and up). Placed high in the page it recomposes the entire subtree with it; it should be pushed down into the smallest leaf composable."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/highlight/TiltLight.kt:32
+    - text: "Internally it calls the no-arg rememberDeviceTilt() with the default smoothing=0.15f, with no pass-through. To change the smoothing you can only write this yourself (read rememberDeviceTilt(smoothing) then construct the LightSource)."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/highlight/TiltLight.kt:31
+    - text: "It uses only tilt.roll / tilt.pitch, not gravityX / gravityY at all -- when the device rotates about the screen normal (spinning flat on a table) the light source does not move."
+      severity: low
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/highlight/TiltLight.kt:35
+    - text: "On sensorless platforms tilt is always Zero, so the light source stays at basePosition, with no error and no fallback notice."
+      severity: medium
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/highlight/TiltLight.kt:16
+  visual:
+    sensitivity: "Default 0.1f -- each radian of tilt moves the light source by 0.1 in normalized UV"
+    intensity: "Default 1f; color defaults to Color.White, and alpha is folded into the contribution weight"
+  state: "No self-held state, purely derived."
+  m3: "No equivalent."
+
+isRuntimeShaderSupported:
+  summary: "The single gating check for the whole shader capability set (blur, color blending, squircle fill). Android requires API 33, all other platforms are always true."
+  gotchas:
+    - text: "On Android it is API 33 (TIRAMISU), not 31. It carries @ChecksSdkIntAtLeast, so accessing API 33 symbols inside an if (isRuntimeShaderSupported()) { ... } block does not trigger the NewApi lint -- but this benefit only exists when importing directly from top.yukonga.miuix.kmp.shader; the same-named back-compat forwarder under the miuix-blur package is a plain common function that has lost this annotation."
+      severity: medium
+      evidence: miuix-shader/src/androidMain/kotlin/top/yukonga/miuix/kmp/shader/RuntimeShader.android.kt:18
+    - text: "Non-Android platforms return true unconditionally, with no real detection. On Web (js/wasmJs), once WebGL is unavailable or the driver is blacklisted, SkSL compilation failure throws an exception directly rather than falling back -- this side has no failure exit at all (makeForShader has no try/catch and the cache does not cache failures)."
+      severity: medium
+      evidence: miuix-shader/src/skikoMain/kotlin/top/yukonga/miuix/kmp/shader/RuntimeShader.skiko.kt:18
+    - text: "The miuix-blur module's minSdk is hardcoded to 33 (not via BuildConfig.MIN_SDK), so an app with minSdk<33 depending on miuix-blur fails manifest merging and needs tools:overrideLibrary. miuix-squircle / miuix-shader have minSdk 24, and 33 is only a runtime gate for them."
+      severity: high
+      evidence: miuix-blur/build.gradle.kts:31
+  visual: {}
+  state: "Pure function, stateless."
+  m3: "No equivalent. M3 has no equivalent capability detection; the official Modifier.blur is silently ineffective on unsupported platforms."
+
+isRenderEffectSupported:
+  summary: "RenderEffect capability detection (Android API 31). A published public API, but with zero call sites in the library."
+  gotchas:
+    - text: "It is dead code: the whole repo has only an expect declaration and two actuals, with no call sites. And structurally no one can use it -- the only possible consumer, miuix-blur, has minSdk 33 itself (higher than 31), and every main path of miuix-squircle needs RuntimeShader (33), so there is no tier in between that needs only RenderEffect."
+      severity: medium
+      evidence: miuix-shader/src/commonMain/kotlin/top/yukonga/miuix/kmp/shader/RenderEffect.kt:7
+    - text: "On Android it checks Build.VERSION_CODES.S, i.e. API 31, while the docs docs/guide/blur.md:60 and docs/zh_CN/guide/blur.md:56 both write True on API 32+, off by one level."
+      severity: medium
+      evidence: miuix-shader/src/androidMain/kotlin/top/yukonga/miuix/kmp/shader/RenderEffect.android.kt:12
+    - text: "The docs' claim of it as a fallback is entirely hollow: docs/guide/blur.md:61 says on API 32 you can also chain a colorFilter(...), but BackdropEffectScope has no colorFilter extension at all (the 9 extensions are colorControls / effect / runtimeShaderEffect / blur / progressiveBlur / noiseDither / blendColors / textureBlurEffect / progressiveTextureBlurEffect). The Chinese mirror docs/zh_CN/guide/blur.md:56-57, 377 has the same error."
+      severity: high
+      evidence: miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffectScope.kt:102
+  visual: {}
+  state: "Pure function, stateless."
+  m3: "No equivalent."
+
+NavDisplay:
+  summary: "The navigation render host: it drives the entire back-stack's transitions by a continuous depth float. Three overloads -- one taking a NavBackStack, one taking a NavController, and an internal entryProvider version."
+  gotchas:
+    - text: "Route matching is by the key's exact runtime KClass, and a supertype/interface registration does not cover subtypes (KClass in common code has no portable supertype traversal). Registering one entry<Route> for a sealed interface Route does not work; you must register each concrete subtype once; missing one crashes at composition with error(No entry { } registered for ...)."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:172
+    - text: "contentKey must be unique across the entire back stack. Pushing the same route value twice (e.g. tapping Detail(id=1) twice) fails a require during reconcile and throws IllegalArgumentException, not silent deduplication. To allow duplicate instances, pass entry(contentKey = { route -> ... }) to generate a per-instance key."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:381
+    - text: "saveable state is namespaced by contentKey.toString(), which brings two extra constraints: (1) two keys that are unequal but have the same toString() are rejected (a data class's toString does not include the package name, so same-named route classes in different packages collide); (2) a key that keeps the default identity toString (pkg.Cls@1a2b3c) passes all runtime checks but resolves to a new string after process death, silently resetting that entry's rememberSaveable state. Use a data class / data object, or a contentKey derived from the value."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:117
+    - text: "An entry that was just popped but is still running its exit animation still occupies its saveable slot -- pushing a new entry that would collide with the same saveable key during this window likewise fails the require. The symptom is an occasional crash on rapid pop+push."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:406
+    - text: "An empty backStack fails the require and crashes. The library's back gesture and swipe-dismiss are both gated on backStack.size > 1 / topIndex > 0, so the default paths are safe; but passing an unconditional pop other than onBack = { backStack.removeLastOrNull() }, or calling backStack.clear() directly, throws NavDisplay back stack cannot be empty on the next composition."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:1032
+    - text: "The entry just below the top (relativeDepth ≤ opaqueDepth, default 1) is still composing, just invisible: NavDisplay adds a hit-testable but non-consuming pointer filter to each entry, so touches on blank areas do not pass through to it, and you need not block it yourself with zIndex / clickable. But its focus is not cleared automatically on push -- if a lower TextField still holds focus, keyboard input still goes into it, so focusManager.clearFocus() yourself before navigating."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:922
+    - text: "Deeper entries (relativeDepth > opaqueDepth, i.e. the stack bottom after pushing two layers by default) are culled out of composition, though still in the back stack: plain remember state is lost, LaunchedEffect / DisposableEffect are cancelled and re-run when you pop back. rememberSaveable state and that entry's ViewModel are retained (the ViewModelStore is managed by the display-level registry and is cleared only when the entry is permanently popped). Put state that must survive culling into rememberSaveable or a ViewModel."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:638
+    - text: "Since 0.9.4 the entry's LocalViewModelStoreOwner implements HasDefaultViewModelProviderFactory, inheriting the parent owner's default factory and CreationExtras, and is also a SavedStateRegistryOwner with extras carrying SAVED_STATE_REGISTRY_OWNER_KEY (the LocalSavedStateRegistryOwner it gets comes from the SaveableStateProvider that NavDisplay wraps around each entry: Compose 1.12's SaveableStateProvider provides a separate registry per key, stored in that entry's saveable slot, not the host Activity's shared registry), so viewModel { Vm(createSavedStateHandle()) }, a ViewModel with a SavedStateHandle constructor parameter, and hiltViewModel() are directly usable inside an entry. On 0.9.4-rc01 and earlier the entry owner was a bare ViewModelStoreOwner that gets empty CreationExtras: createSavedStateHandle() throws IllegalArgumentException (missing SAVED_STATE_REGISTRY_OWNER_KEY), and hiltViewModel() relying on the default factory also fails to create -- on old versions you can only use ViewModels that do not need a SavedStateHandle."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/state/NavEntryViewModel.kt:115-121
+  visual: {}
+  state: "Purely controlled: the state is the NavBackStack passed in from outside (SnapshotStateList<NavKey>), and NavDisplay does not hold the stack itself. onBack defaults to backStack.removeLastOrNull() (the NavController overload defaults to navController.pop()). Each entry has its own LifecycleOwner, ViewModelStoreOwner (since 0.9.4 also providing the extras SavedStateHandle needs), a saveable slot carved out of the shared SaveableStateHolder by contentKey.toString(), and a LocalNavTransitionScope."
+  m3: "No direct equivalent. Compared to androidx.navigation's NavHost: there are no route strings, no deep links, no result channel (explicitly not done in v1), and the back stack is a SnapshotStateList you can add/removeAt directly."
+
+rememberNavBackStack:
+  summary: "Remembers and persists a back stack. NavBackStack is just a typealias for SnapshotStateList<NavKey> -- backStack.add(route) directly is navigation."
+  gotchas:
+    - text: "When seeding with a single concrete key you must write the supertype explicitly: rememberNavBackStack(Route.Home) infers T as Route.Home, and later pushing Route.Detail throws SerializationException when saving state (and it fails late -- no error at navigation time, it blows up on rotation/backgrounding). The correct form is rememberNavBackStack<Route>(Route.Home), which the KDoc itself calls out."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt:61
+    - text: "The key type must be @Serializable, otherwise the serializer capture at first composition throws SerializationException. The two failure points are asymmetric: an unannotated type crashes at first composition (fail fast), while an instance escaping the captured type hierarchy crashes only at save time (fail late)."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt:42
+    - text: "The vararg elements are only a seed at first composition. After rememberSaveable restores, it is ignored, and changing these parameters does not change an existing stack."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt:72
+    - text: "The Json used for serialization has ignoreUnknownKeys on -- that only relaxes unknown fields, not an unknown polymorphic discriminator. Restoring from old persisted state after deleting or renaming a route class still throws."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt:32
+    - text: "For tests or non-composition contexts use navBackStackOf(vararg), which places no serializability requirement on keys (a pure in-memory stack, no persistence)."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt:28
+  visual: {}
+  state: "It returns the SnapshotStateList<NavKey> itself, fully controlled: add / removeAt / removeLastOrNull / directly mutating elements are all valid navigation operations. It persists as a single JSON String (not a List<Any>), sidestepping Android Bundle's type restrictions."
+  m3: "Corresponds to androidx.navigation's NavBackStackEntry stack, but that one is not directly mutable; this is a bare SnapshotStateList."
+
+rememberNavController:
+  summary: "A layer of push/pop/replace/popUntil sugar wrapped around rememberNavBackStack. Entirely optional -- operating on backStack directly is equivalent."
+  gotchas:
+    - text: "Inherits rememberNavBackStack's type-inference pitfall: you must write rememberNavController<Route>(Route.Home), otherwise T is inferred as a concrete subtype and pushing a different route later throws when saving state."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavController.kt:60
+    - text: "pop() does not pop when only the root remains and returns false (neither throwing nor clearing). To actually exit the app, check the return value yourself and then invoke the system back."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavController.kt:30
+    - text: "popUntil(predicate) pops all the way down to just the root when the predicate never matches, with no error. The predicate is evaluated against the top element; note it does not check the root itself."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavController.kt:50
+    - text: "NavController has zero state beyond wrapping that list, and two controllers wrapping the same backStack are fully equivalent. So do not try to use it as a singleton or for cross-screen sharing -- what should be shared is the backStack."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavController.kt:13
+  visual: {}
+  state: "A pure thin shell, no self-held state. There is no result channel (navigateForResult/setResult/observeResult are explicitly not done in v1), so cross-screen return values must go through shared state yourself."
+  m3: "Corresponds to androidx.navigation.NavController, but with only four methods, no graph, no deep link, and no previousBackStackEntry.savedStateHandle-style return channel (the SavedStateHandle of a ViewModel inside an entry is available since 0.9.4, see NavDisplay)."
+
+LocalNavTransitionScope:
+  summary: "Added in 0.9.4. Inside a NavDisplay entry's content, read LocalNavTransitionScope.current to get this entry's own live NavTransitionScope (relativeDepth is relative to this entry: 0 top of stack, positive covered, negative entering/leaving), used for entry-local transition coordination, such as pausing heavy work during a transition or fading out one of your child elements by depth. 0.9.4-rc01 and earlier have neither this property nor isRunning."
+  gotchas:
+    - text: "The default value is error(): reading it outside a NavDisplay entry (@Preview, a UI test rendering a screen composable standalone, a top/bottom bar wrapped outside NavDisplay) throws IllegalStateException directly. For components that may render outside NavDisplay, do not read it internally; instead have the caller pass the needed values in as parameters."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/LocalNavTransitionScope.kt:19-24
+    - text: "relativeDepth and role change every frame, gesture becomes a new instance on every move event, and settle.elapsedMillis also advances per frame -- reading them during composition (the composable function body, remember calculations) recomposes the entire entry per frame. Read these values only in deferred-read blocks like graphicsLayer { } / drawBehind; during composition read only isRunning, a derived coarse-grained signal that flips only at transition start / end."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/LiveNavTransitionScope.kt:39-50
+    - text: "isRunning is at the whole-NavDisplay level, not this entry's: as long as this NavDisplay has a gesture, a release settle, or a programmatic animation running, every composing entry in the stack reads true, including layers not participating in this transition. To know whether this entry is moving, look at relativeDepth (in a deferred-read block). With nested NavDisplays an inner entry reads the inner scope, and the outer one is shadowed."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/LiveNavTransitionScope.kt:50
+
+Modifier.navSwipeDismiss:
+  summary: "Finger-following swipe-dismiss that directly drives the animatedTop depth float. NavDisplay already attaches its internal version on the container -- this public one is for custom hosts."
+  gotchas:
+    - text: "It is not plug-and-play swipe-dismiss. You must hold an Animatable<Float, AnimationVector1D> yourself as the depth driver, maintain topIndex yourself, and pop yourself in onCommit. Attaching it again inside NavDisplay's page content fights the host's already-attached one for the same gesture."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt:104
+    - text: "Once it claims the gesture, every subsequent pointer change is consumed on both axes and it ends only when the finger lifts -- there is no cross-axis cancel path. This means any nested scroll or in-page tap receives no events during that time (intentional design, fixing an old bug where a swipe was interrupted by horizontal drift), but it makes in-page interaction completely silent during a swipe."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt:57
+    - text: "NavSwipeDirection.None turns off the gesture entirely (you can only pop via the back key), which is also how the root entry is handled. enabled=false is the same. The two are semantically identical but come from different sources: direction is usually inherited from the transition's dismissDirection, and enabled is given by the host based on topIndex > 0."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt:62
+    - text: "onCommit is called synchronously at the moment the release is judged a commit, not waiting for the settle animation to finish (the KDoc explains why: deferring the pop until after settle is unsafe in the per-entry coroutine scope). So after popping in onCommit the animation is still running -- do not do cleanup there that assumes the animation has completed."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt:92
+    - text: "It is a Modifier.composed { } implementation (needing the composition scope's coroutine and latest callbacks), not a Modifier.Node. It has extra overhead in scenarios that rebuild the modifier chain at very high frequency, and the source locally suppresses the no-composed lint."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt:101
+  visual:
+    commit_rule: "The release decision is velocity-first with position as fallback (NavDriverSpec.COMMIT_VELOCITY_THRESHOLD / COMMIT_POSITION_THRESHOLD); velocity uses VelocityTracker to take an instantaneous value converted to progress/second"
+  state: "It does not hold navigation state; it drives the animatedTop passed in by the caller. The onGesture callback gives null after gesture resolution completes, but on the commit branch clearing null is the host's responsibility (when the leaving entry unloads)."
+  m3: "Corresponds to M3's SwipeToDismissBox, but that is a component with its own state; this is a low-level modifier to be wired into the depth-driven model."
+
+navDirectionalTransition:
+  summary: "Composes the three NavTransitions push / pop / predictivePop into one and dispatches by drive direction. Use it for asymmetric forward/back transitions."
+  gotchas:
+    - text: "push.motion is never consumed. The composed motion takes commit/cancel from predictivePop and programmatic from pop. To give the forward direction its own motion curve, use entry(transition = ...)'s per-route override, not push here."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/transition/NavDirectionalTransition.kt:23
+    - text: "dismissDirection comes only from predictivePop -- setting dismissDirection on push or pop is useless, and the swipe-dismiss direction is decided by predictivePop alone. opaqueDepth takes the max of the three."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/transition/NavDirectionalTransition.kt:52
+    - text: "A gesture can take over midway through a programmatic settle, at which point dispatch switches from pop/push to predictivePop on the spot. If the two branches are geometrically inconsistent at that depth, a frame jumps. The source lists this as a known tradeoff (the platform makes commit animations non-interruptible; here interruptibility is kept). When writing branches, keep them close within the grabbable range."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/transition/NavDirectionalTransition.kt:26
+    - text: "Dispatch uses the internal threshold-level derived flag LiveNavTransitionScope.gestureActive, not the raw scope.gesture -- the latter is a new instance on every move event, and transformEntry is called during composition, so reading it there recomposes per event. gestureActive is not public: when implementing your own NavTransition and needing a composition-time signal, you can only use scope.isRunning from 0.9.4 (true during a gesture, the post-release settle, and programmatic animation, unable to tell whether it is a gesture); to distinguish a gesture, put the read of scope.gesture inside graphicsLayer { }."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/transition/NavDirectionalTransition.kt:79
+  visual: {}
+  state: "An @Stable stateless wrapper; all three branches are immutable NavTransitions. pop defaults to push, predictivePop defaults to pop."
+  m3: "No equivalent. M3/androidx's AnimatedContent transitionSpec selects by targetState and does not distinguish gesture-driven from programmatic."
+
+PredictiveBackHandler:
+  summary: "A cross-platform back-event bridge: Android's system predictive back, Desktop's ESC, iOS edge gesture, unified into a single Flow<NavBackEvent> + onCommit/onCancel."
+  gotchas:
+    - text: "Without a LocalNavigationEventDispatcherOwner it silently does nothing (the first line of the function body is ?: return), neither registering nor erroring. When the host has not wired a back-event source, the back key is completely unresponsive with no way to diagnose."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt:104
+    - text: "Discrete triggers (Desktop pressing ESC, programmatic back) skip onProgress and call onCommit directly -- so onProgress is not guaranteed to be called, and any initialization written only in onProgress does not run on the discrete path. Each resolution triggers exactly one of onCommit / onCancel."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt:70
+    - text: "Arbitration favors the last-composed and enabled one. An open dialog / bottom sheet / popup menu registers the same way and consumes back before navigation -- this is automatic, do not add your own priority logic. Conversely, when enabled=false, back passes through to the next handler (on Android that means exiting the app)."
+      severity: medium
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt:56
+    - text: "NavBackEvent.progress saturates near 1f (the driving finger's upper bound) and does not overflow even if the device reports over 1. Do not use progress == 1f as a commit signal; commit is indicated only by onCommit. frameTimeMillis is 0 on a discrete trigger."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt:33
+  visual: {}
+  state: "Stateless host. onProgress receives a cold Flow that is independent per gesture; callbacks are continuously updated onto the adapter via SideEffect, so creating a new lambda each frame does not re-register. When a gesture is cancelled the in-flight collection is cancelled and then onCancel is called."
+  m3: "Corresponds to androidx.activity.compose.PredictiveBackHandler, but this one is cross-platform and its callback shape aligns with Miuix's single-float depth-driven model."
+
+getRoundedCorner:
+  summary: "Reads the device screen's physical corner radius. Used to align edge-hugging cards/navigation containers with the screen's corners."
+  gotchas:
+    - text: "On all non-Android platforms it always returns 0.dp (the skiko actual is one line). Any layout that relies on it for visual alignment degrades to square corners on Desktop / iOS / Web, with no error. Provide a fallback value before using it."
+      severity: high
+      evidence: miuix-core/src/skikoMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.skiko.kt:16
+    - text: "On Android it can also be 0: API 31+ goes through WindowInsets.getRoundedCorner(POSITION_BOTTOM_LEFT), and only when that returns nothing does it fall back to reading the system-private dimen rounded_corner_radius_bottom (a MIUI convention), returning 0 when that resource does not exist. In other words, on non-Xiaomi Android 11-and-below devices it is essentially always 0."
+      severity: medium
+      evidence: miuix-core/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.android.kt:51
+    - text: "It reads only the bottom-left position, assuming all four corners have the same radius. On irregular screens (different top and bottom corners) it reads the wrong value."
+      severity: low
+      evidence: miuix-core/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.android.kt:39
+  visual:
+    non_android: "always 0.dp"
+  state: "@Composable read-only. On Android it is remember keyed on (context, rootWindowInsets), and insets changes (rotation, multi-window) recompute it."
+  m3: "No equivalent. M3 does not expose the screen corner radius."
+
+platformDialogProperties:
+  summary: "The platform default DialogProperties for Miuix's own dialogs. Together with RemovePlatformDialogDefaultEffects, the goal is to fully turn off the platform's default window animation and scrim so Miuix can draw its own."
+  gotchas:
+    - text: "Both platforms set dismissOnBackPress to false. Using it to open a plain Dialog gives you a dialog the back key cannot close -- you must wire the close logic yourself (Miuix's dialog components go through the PredictiveBackHandler chain)."
+      severity: high
+      evidence: miuix-core/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.android.kt:58
+    - text: "The DialogProperties fields returned by the two platforms are not the same: Android is (dismissOnBackPress=false, usePlatformDefaultWidth=false, decorFitsSystemWindows=false), skiko is (dismissOnBackPress=false, usePlatformDefaultWidth=false, usePlatformInsets=false, scrimColor=Transparent, animateTransition=false). The skiko version also carries @OptIn(ExperimentalComposeUiApi). Do not assume the two behave identically."
+      severity: medium
+      evidence: miuix-core/src/skikoMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.skiko.kt:25
+    - text: "Turning off the platform window animation and dim is not done in this function -- that is RemovePlatformDialogDefaultEffects() (on Android it changes the window's windowAnimations / dimAmount / FLAG_DIM_BEHIND, on skiko it is a no-op). Using platformDialogProperties without calling it means on Android you still see the system's window animation and scrim layered over Miuix's own animation."
+      severity: medium
+      evidence: miuix-core/src/androidMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.android.kt:64
+  visual: {}
+  state: "A @Composable pure factory, stateless."
+  m3: "Corresponds to constructing androidx.compose.ui.window.DialogProperties() directly. The difference is that these defaults are tuned for Miuix's self-drawn dialogs, not general defaults."
+
+MiuixIcons:
+  summary: "An icon namespace: a carrier with just six empty nested objects (Basic / Light / Normal / Regular / Medium / Demibold), with the actual icons attached as extension properties by two different modules."
+  gotchas:
+    - text: "MiuixIcons.Save does not exist. docs/components/icon.md:145 and the Chinese mirror both use it, but the Kotlin source across the repo has zero hits. The closest are MiuixIcons.Download / FileDownloads / TopDownloads."
+      severity: high
+      evidence: miuix-core/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/MiuixIcons.kt:6
+    - text: "MiuixIcons.Basic.Audio does not exist. docs/components/sliderpreference.md:114 and rangesliderpreference.md:113 (4 places across the two language versions) use it, but the Basic group has only 7 in total: ArrowRight / ArrowUpDown / Check / Close / Search / SearchCleanup / Sidebar."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/basic/Close.kt:14
+    - text: "The Basic group and the extended group belong to different modules: the MiuixIcons.Basic.* extension properties are in miuix-ui (package top.yukonga.miuix.kmp.icon.basic), and the rest are all in miuix-icons (package top.yukonga.miuix.kmp.icon.extended). Depending on miuix-ui only, writing MiuixIcons.Ok does not compile; depending on miuix-icons only, writing MiuixIcons.Basic.Search does not compile."
+      severity: high
+      evidence: miuix-icons/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/extended/Close.kt:15
+    - text: "Close / Search / Sidebar exist in both groups and are two completely different graphics (Basic.Close is a 24x24 viewport, 2.2f round-cap stroked cross; extended's Close is a 1003.2 viewport filled path). The receivers differ (MiuixIcons.Basic.Close vs MiuixIcons.Close), and when both dependencies are present writing the wrong receiver silently compiles and draws the other icon -- harder to spot than a compile error. The Basic Icons table in docs/guide/icons.md only gives bare icon names and never states the receiver is MiuixIcons.Basic, which is the root cause of the two doc bugs above."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/basic/Search.kt:14
+    - text: "Writing MiuixIcons.X bare gets an alias for the Regular weight (get() = MiuixIcons.Regular.X), not some neutral version. The five weights Light/Normal/Regular/Medium/Demibold are each a separate ImageVector, each with a file-level private var cache. The Basic group has no weight axis."
+      severity: medium
+      evidence: miuix-icons/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/extended/Home.kt:15
+    - text: "The extended group is one icon per file (156 files, about 780 ImageVectors across five weights), and the physical layout serves DCE/R8 tree-shaking -- only the icon extension properties actually referenced are retained, and adding the dependency does not mean all of them enter the package."
+      severity: low
+      evidence: miuix-icons/src/commonMain/kotlin/top/yukonga/miuix/kmp/icon/extended/Add.kt:15
+  visual:
+    weights: "Five weights Light / Normal / Regular / Medium / Demibold; bare MiuixIcons.X == MiuixIcons.Regular.X"
+    basic_set: "The Basic group has 7 in total: ArrowRight, ArrowUpDown, Check, Close, Search, SearchCleanup, Sidebar (living in miuix-ui)"
+  state: "They are all lazy val extension properties, built on first read and stored in a file-level private var (not thread-safe, worst case building once redundantly, with no correctness impact)."
+  m3: "Corresponds to androidx.compose.material.icons.Icons (five styles Filled/Outlined/Rounded/Sharp/TwoTone). Difference: M3's axis is style, Miuix's axis is stroke weight; and Miuix puts the Basic group in the UI module and the extended group in a separate module, requiring separate dependencies."
+
+NavKey:
+  summary: "The marker interface every route key must implement (package top.yukonga.miuix.kmp.nav.core). Minimal form:\n\n```kotlin\n@Serializable\nsealed interface Route : NavKey {\n    @Serializable data object Home : Route\n    @Serializable data class Detail(val id: Int) : Route\n}\n\nval backStack = rememberNavBackStack<Route>(Route.Home)\nNavDisplay(backStack = backStack) {\n    entry<Route.Home> { /* Home; navigate: backStack.add(Route.Detail(42)) */ }\n    entry<Route.Detail> { key -> /* Detail screen, read key.id; back: backStack.removeLastOrNull() */ }\n}\n```"
+  gotchas:
+    - text: "With rememberNavBackStack every key type must be @Serializable, which requires applying the kotlinx-serialization **compiler plugin** on the module (plugins { kotlin(\"plugin.serialization\") } or id(\"org.jetbrains.kotlin.plugin.serialization\")). Adding only the annotation without the plugin still compiles, and it throws SerializationException only when the serializer is captured at first composition. You need not add the runtime library yourself; miuix-nav transitively provides kotlinx-serialization-json as an api dependency."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavKey.kt:21-23
+    - text: "A stack that does not need cross-process restoration can use navBackStackOf(...): in-memory only, requiring no serializable key and thus no compiler plugin."
+      severity: low
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavKey.kt:23-24
+
+NavEntryBuilder:
+  summary: "The receiver of NavDisplay's content lambda, with a single route-registration function: inline fun <reified T : NavKey> entry(contentKey: ((T) -> Any)? = null, transition: NavTransition? = null, swipeDismiss: NavSwipeDirection? = null, metadata: Map<String, Any> = emptyMap(), content: @Composable (T) -> Unit). It is a member function of the class, so it does not appear in the signature list generated for top-level functions; for usage see the NavKey entry."
+  gotchas:
+    - text: "Each concrete key type needs its own entry<ConcreteType> once: matching is by exact runtime KClass, and registering entry<Route> for a sealed parent interface does not cover subtypes (see the NavDisplay entry for details). transition can override the global transition per screen."
+      severity: high
+      evidence: miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt:132-138

@@ -1,0 +1,393 @@
+# Overlays: the Overlay and Window families
+#
+# How to choose (read this before the components):
+#   Overlay* = rendered inside the Compose tree; the content is placed into the host Scaffold's popup slot.
+#     Must be used inside a Scaffold (the Scaffold default is popupHost = { MiuixPopupHost() }, Scaffold.kt:88);
+#     outside a Scaffold, LocalPopupStates / LocalDialogStates resolve to the free-floating empty
+#     default lists from staticCompositionLocalOf; state registers into a list nobody iterates — no exception, no log, the overlay simply never appears.
+#     Unique renderInRootScaffold parameter: true (default) attaches to the outermost Scaffold and covers the whole screen; false attaches to the current
+#     Scaffold with position compensation and is clipped by its bounds.
+#   Window* = opens a platform androidx.compose.ui.window.Dialog. Usable anywhere, can overflow the host bounds,
+#     and on Android is a separate window. No renderInRootScaffold.
+#   Decision: default to Window* (no host dependency, no silent failure); use Overlay* only when the overlay must be clipped by a Scaffold,
+#     or must cooperate with the Scaffold's z-layering. The two families share the layout layer 100% for visuals/animation/gestures,
+#     behave identically apart from the host, and are interchangeable.
+#   Mixing note: PopupState / DialogState each hold a zIndex (MiuixPopupUtils.kt:63, :77), assigned by the same
+#     counter nextZIndex++ at registration (:191, :272); DialogEntry / PopupEntry both apply it with Modifier.zIndex
+#     (:410, :513; dim layers -0.001f / -0.002f). So stacking order equals open order, independent of MiuixPopupHost's
+#     iteration order (dialogStates then popupStates); nextZIndex resets to 1 only after all overlays close (:566-569).
+
+OverlayDialog:
+  summary: "A dialog rendered inside the Compose tree, attached to the host Scaffold's popup slot; on small screens it slides in flush with the bottom, on large screens it scale-fades in centered. Use it when it needs to be clipped by a Scaffold or to coordinate with a Scaffold's layering, otherwise prefer WindowDialog."
+  gotchas:
+    - text: "Must be inside a Scaffold. Intuitively writing it in any composable compiles and runs, but LocalDialogStates gets the staticCompositionLocalOf default empty list, and the state registers into a list no host iterates -- the dialog silently does not show, with no exception and no log."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:596
+    - text: "onDismissRequest is nullable and defaults to null. Not passing it makes the dialog completely uncloseable: tapping the outside area goes through currentOnDismiss?.invoke(), and the back key is the same callback, so when null both paths no-op. For an \"uncloseable\" dialog this is exactly right, but to make it closeable you must pass it explicitly."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt:376
+    - text: "show = false does not mean immediate unload. The internal internalVisible only becomes false after the exit animation (260ms) finishes, and during that time the whole content subtree is still composed. To do something \"after it fully disappears\" (reset a form, navigate) you must use onDismissFinished; doing it right where show is set false collides with the still-playing animation."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt:163
+    - text: "Large and small screens are two completely different presentations, with the breakpoint \"window width >= 840dp and height >= 480dp\": large screen is centered + scale 0.8→1 fade-in + height capped at 2/3 of window height; small screen is bottom-flush, slides in via full-window-height translationY, with no height cap. On desktop, dragging the window across the breakpoint makes the whole layout jump; for fixed behavior pass largeScreen explicitly."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt:422
+    - text: "When cornerRadius defaults to null, the small-screen corner is \"screen physical corner − outsideMargin.width\" clamped to 32..48dp (concentric corners). But getRoundedCorner() always returns 0.dp on Skiko (desktop/iOS/Web), so on non-Android platforms it is always the lower bound 32dp, and adjusting outsideMargin does not change it. For a different corner you must pass cornerRadius explicitly."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt:305
+  visual:
+    max_width: "420.dp (DialogDefaults.MaxWidth)"
+    corner: "Large screen 32.dp (DialogDefaults.CornerRadius); small screen = screen physical corner − outsideMargin.width, clamped to 32..48dp, always 32.dp on Skiko"
+    outside_margin: "DpSize(12.dp, 12.dp)"
+    inside_margin: "DpSize(24.dp, 24.dp)"
+    large_screen_height_cap: "window height × 2/3"
+    enter: "Large screen: scale 0.8→1 + alpha 0→1 under folmeSpring(damping 0.9, response 0.3); small screen: full-window-height translationY slide-in under spring(0.88, 450)"
+    exit: "tween 260ms DecelerateEasing(1.5)"
+  state: "Purely controlled. show is held by the caller, onDismissRequest is only a \"close request\", and the component never changes show itself -- forgetting to set false in the callback makes it uncloseable forever. onDismissFinished fires once after the exit animation ends. Inside content you can read LocalDismissState to get the close entry point, without passing the callback down. Apart from show you need not remember anything (the animation state is held internally by the component)."
+  m3: "Corresponds to androidx.compose.material3.AlertDialog / BasicAlertDialog. Differences: M3's is a platform Dialog window with onDismissRequest required, while the Miuix Overlay version is inside the Compose tree, requires a Scaffold, and has a nullable onDismissRequest (null means uncloseable); there are no confirmButton / dismissButton / icon slots, buttons are laid out in content yourself; small screen defaults to bottom-flush rather than centered; there is no DialogProperties, and things like dismissOnClickOutside can only be expressed by whether the callback is null."
+
+OverlayBottomSheet:
+  summary: "A bottom sheet rendered inside the Compose tree; its height adapts to content and does not go past the status bar; it has a drag handle, nested-scroll takeover, and predictive-back preview. Use it when it needs to be clipped by a Scaffold, otherwise prefer WindowBottomSheet."
+  gotchas:
+    - text: "Must be inside a Scaffold, otherwise it silently does not show (same as OverlayDialog)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:596
+    - text: "allowDismiss = false does not block LocalDismissState. The internal requestDismiss does not check allowDismiss at all, and it is injected into all three slots content, startAction, endAction -- so when using allowDismiss = false to \"force staying inside the sheet\", a close button in any of those slots calling LocalDismissState can still close it."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:181
+    - text: "allowDismiss gates three paths rather than the two the docs claim: the pull-down gesture, the back gesture, and tapping the scrim's outside area. All three are turned off by the same switch."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:258
+    - text: "onDismissRequest is nullable and defaults to null. When null, the pull-down gesture still slides the whole sheet off screen (animateDismissOffScreen runs anyway), but the callback no-ops and show is still true -- the result is a sheet that is invisible yet still composed and can never come back. Either pass a callback, or use allowDismiss = false."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:182
+    - text: "The dismiss threshold is hardcoded and not configurable: displacement over 150.dp with no clear upward velocity, or downward velocity over 800.dp/s (the source converts dp to px and uses it as a px/s threshold, with a comment admitting this is a deliberate dimensional approximation). To make it harder/easier to close you can only wrap the gesture yourself outside."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:400
+    - text: "The nested-scroll takeover is a \"one-time decision on the first frame of a single gesture\": if the inner list consumes any scroll on the gesture's first frame (i.e. the list is not scrolled to the top), the whole gesture will not drag the sheet, and you must release and press again. This deliberately avoids a mid-gesture jump, but users feel \"scrolled to the top yet cannot drag\"."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:489
+    - text: "There is no large-screen branch at all. The docs' line \"supports large-screen optimized animation\" was copied from the dialog page; BottomSheetContentLayout has no isLargeScreen anywhere; the only wide-screen adaptation is sheetMaxWidth defaulting to 640.dp for width-limited centering."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:883
+  visual:
+    corner: "28.dp (BottomSheetDefaults.cornerRadius, top two corners only)"
+    max_width: "640.dp (BottomSheetDefaults.maxWidth)"
+    outside_margin: "DpSize(0.dp, 0.dp)"
+    inside_margin: "DpSize(24.dp, 0.dp)"
+    drag_handle: "45×4.dp, on press the width animates to 55.dp with scaleY 1.15; opacity lerp(0.2, 0.35) between unpressed/pressed, applied over dragHandleColor"
+    enter_exit: "folmeSpring(damping 0.9, response 0.38); when closed by being dragged away, no exit animation plays and animationProgress directly snapTo(0)"
+  state: "Controlled show + self-held gesture state. Drag displacement, spring-back, nested-scroll decision, and predictive-back progress are all managed by internal Animatables, which the outside cannot get and need not remember. onDismissRequest is likewise only a request. LocalDismissState is injected into the three slots content / startAction / endAction (note it bypasses allowDismiss). onDismissFinished fires after the exit ends."
+  m3: "Corresponds to androidx.compose.material3.ModalBottomSheet + rememberModalBottomSheetState. Differences: Miuix has no SheetState, no partiallyExpanded / halfExpanded tiers and no skipPartiallyExpanded, only expanded and closed states; there is no need for (and no) suspend hide(), you just change the show boolean; allowDismiss roughly corresponds to M3's confirmValueChange + property switches, but LocalDismissState bypasses it; BottomSheetDefaults is in the top.yukonga.miuix.kmp.layout package (not the window/overlay package), which is easy to get wrong on import."
+
+OverlayListPopup:
+  summary: "An anchored list popup rendered inside the Compose tree (the dropdown menu itself), revealed by scaling from the anchor direction + directional clipping. The content is usually filled with ListPopupColumn + DropdownImpl."
+  gotchas:
+    - text: "The four corner values of PopupPositionProvider.Align (TopStart / TopEnd / BottomStart / BottomEnd) are all ineffective under the default ListPopupDefaults.DropdownPositionProvider and equal Start: that provider only checks alignment.resolve(...) == Align.End and sends everything else to the else branch. The corner semantics only hold when you explicitly pass ListPopupDefaults.ContextMenuPositionProvider, and even then the direction is reversed -- TopStart/TopEnd put the popup below the anchor, BottomStart/BottomEnd put it above (Align's KDoc says \"relative to the window, not relative to the anchor\"). This repo's own demo hits this pitfall, passing Align.TopStart yet pairing it with the default provider."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:250
+    - text: "The flip side of the previous entry: docs/demo/src/commonMain/kotlin/WindowListPopupDemo.kt:47 passes Align.TopStart with the default provider, and actually gets Start behavior. Copying the official demo gives a position that does not match expectations."
+      severity: medium
+      evidence: docs/demo/src/commonMain/kotlin/WindowListPopupDemo.kt:47
+    - text: "Must be inside a Scaffold, otherwise it silently does not show (same as OverlayDialog; the list popup uses the LocalPopupStates default empty list)."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt:595
+    - text: "There is no anchor parameter: the anchor is \"the parent layout node the call site sits in\". The component puts a zero-size Spacer inside and reverse-looks-up the parent container rect via parentLayoutCoordinates.positionInWindow(). So you must write OverlayListPopup and the trigger button into the same parent container (typically Box { IconButton(...); OverlayListPopup(...) }); putting it alone at the top of a Column makes the anchor the whole Column, and the popup hugs the entire column rather than the button. The Box in the example is the anchor itself, not layout sugar."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:127
+    - text: "When the parent coordinates cannot be obtained (parentBounds is still IntRect.Zero) the whole popup simply returns, neither rendering nor erroring. A parent node with size 0 or not yet measured shows this behavior; when debugging, do not suspect show."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:139
+    - text: "popupModifier applies to the full-screen overlay, not the popup card. You cannot change the card's background/corner: the 16.dp corner and surfaceContainer background are hardcoded in ListPopupContent. Adding a background in popupModifier fills the whole screen."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:193
+    - text: "enableWindowDim = false only skips drawing the scrim; tapping outside the popup still triggers onDismissRequest (the outside-tap gesture is on the full-screen Box, unrelated to the dim). For \"tapping outside does not close\" you can only omit onDismissRequest."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:199
+    - text: "onDismissRequest is nullable and defaults to null; without it, neither tapping outside nor the back key can close it."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:149
+    - text: "With renderInRootScaffold = false (attached to an inner Scaffold), on the first frame hostPositionInWindow is still Offset.Zero, and the window-coordinate→local-coordinate compensation is only correct after the onGloballyPositioned callback, so under a nested Scaffold it can theoretically be misaligned for one frame. The cascading version has a hostMeasured guard for this, this one does not."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:91
+  visual:
+    corner: "16.dp (hardcoded in ListPopupContent)"
+    background: "MiuixTheme.colorScheme.surfaceContainer (hardcoded)"
+    min_width: "ListPopupDefaults.MinWidth = 200.dp"
+    min_height: "ListPopupDefaults.MinPopupHeight = 50.dp"
+    enter: "scale 0.15→1 (spring dampingRatio 0.82 / stiffness 362.5) + alpha tween 200ms + squircle clip reveal expanding from the anchor direction"
+    exit: "alpha tween 150ms as the master clock, and the other tracks then forcibly snapTo(0)"
+    dim: "MiuixTheme.colorScheme.windowDimming, enter tween 300ms / exit 150ms (SinOutEasing)"
+  state: "Controlled show, no internal expanded state. The four animation tracks (fraction / alpha / dim / back) and anchor detection are all held internally by the component, and the outside only needs to remember a Boolean. Inside content you can read LocalDismissState to close. When the popup closes the whole subtree unloads, so ListPopupColumn's scroll position returns to the top on every reopen."
+  m3: "Corresponds to androidx.compose.material3.DropdownMenu (and the menu part of ExposedDropdownMenuBox). Differences: M3 uses expanded + onDismissRequest with the anchor being the Box it sits in, while Miuix reverse-looks-up the parent layout node with a more hidden anchor rule; M3 has offset: DpOffset for fine positioning, Miuix can only swap the PopupPositionProvider; M3's DropdownMenuItem ≈ Miuix's DropdownImpl; most importantly, M3's DropdownMenu is a platform Popup that can overflow the host, while the Overlay version cannot (for overflow use WindowListPopup)."
+
+OverlayCascadingListPopup:
+  summary: "A two-level cascading menu rendered inside the Compose tree: the submenu morphs and grows out of the tapped row while the first level shrinks and gets a semi-transparent scrim over it. Depth is hard-limited to 2 levels, it accepts only entries data, and there is no content slot."
+  gotchas:
+    - text: "onDismissRequest is two-stage, not \"tap outside to close\": when the second level is expanded, tapping outside or pressing back only collapses the second level and does not call onDismissRequest; closing the whole popup takes two actions. This is especially easy to hit when writing automated tests or using the back key for navigation."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:257
+    - text: "Depth is hard-limited to 2 levels: third-level and deeper children are simply ignored. The docs say \"silently ignored\", but in reality it prints a one-line warning to stdout via println, and a file-level mutable global deeperChildrenWarned ensures it prints only once per process -- it is neither an exception nor via Logger, so it is easy to miss."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingMorphContent.kt:121
+    - text: "A first-level item's DropdownItem.onClick is swallowed when children is non-empty (a tap always becomes expanding the submenu); but a second-level leaf item's onClick is called normally. So the rule \"onClick is ignored when there are children\" only holds for the first level; do not assume the second level also relies on some other callback."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:326
+    - text: "entries must keep a stable structure while the popup is showing. The component tracks the currently expanded item by (entryIndex, itemIndex) position (positionOf locates it internally with reference equality ===), so inserting/deleting/reordering items while the popup is open makes the submenu jump to a different item or auto-collapse. An item's values (selected, text, etc.) can change freely, which is exactly the point of tracking by position rather than object. Also, creating a new listOf(...) on every recomposition in the composable body does work (relocating each frame), but DropdownItem.children's KDoc explicitly requires stabilizing this list with remember."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:78
+    - text: "There is no content slot; you can only describe the content with entries: List<DropdownEntry>; to place custom rows (a switch, a slider, an arbitrary composable) you must switch to OverlayListPopup and assemble ListPopupColumn yourself."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/overlay/OverlayCascadingListPopup.kt:56
+    - text: "The default alignment is Align.End, while OverlayListPopup's default is Align.Start. Mixing the two gives inconsistent alignment directions under the same anchor."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/overlay/OverlayCascadingListPopup.kt:50
+    - text: "With collapseOnSelection = false, after selecting a leaf it neither closes the popup nor collapses the second level (clearing the expanded state and dismiss are in the same if branch), so the UI stays on the second level. For \"return to the first level after selecting\" you must control show and reopen yourself."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:327
+    - text: "The second level is internally also a ListPopupColumn, and the cloned header row and the divider below it each count as one \"item\", which counts toward ListPopupColumn's height viewport that only shows the first 8 items -- so the second level can actually only show 6 child items, and from the 7th on it must scroll."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingMorphContent.kt:362
+  visual:
+    corner: "16.dp (CascadingPopupCornerRadius)"
+    shadow: "The first-level panel has a dropShadow: radius 24.dp, Color.Black alpha 0.18, offset (0, 6.dp) -- a plain ListPopup has no shadow at all, which is one visual inconsistency between the two"
+    expand: "The first level shrinks to scale 0.95 and gets a scrim; the second level grows by linearly interpolating the four sides of the anchor-row rect; the trigger row's arrow rotates ∓90° (reversed in RTL)"
+    springs: "Expand folmeSpring(damping 0.99, response 0.45), collapse response 0.2; arrow expand 0.2 / collapse 0.3"
+    min_width: "200.dp (a default hardcoded by this component itself, not ListPopupDefaults.MinWidth)"
+  state: "Controlled show + entries; the second level's expanded state is entirely held internally by the component (expandedItemPosition / displayedItemPosition are two separate states, the logical state responds immediately while the render state waits for the collapse spring to end), which the outside can neither read nor control. onDismissRequest here is required and non-null (unlike the nullable one on ListPopup / Dialog). entries should be stabilized with remember."
+  m3: "No equivalent. Material3 has no cascading/morph menu, and to achieve a similar effect you must nest DropdownMenus yourself, with none of the behaviors (morph, two-stage back, anchor freeze) mapping over."
+
+WindowDialog:
+  summary: "A dialog rendered as a platform Dialog window; usable anywhere, needs no Scaffold, and can overflow the host boundary. Its visuals and animation are identical to OverlayDialog (they share DialogContentLayout)."
+  gotchas:
+    - text: "onDismissRequest is nullable and defaults to null, and the platform's dismissOnBackPress is hardcoded to false (the back key is handled exclusively by the internal NavigationBackHandler). So when onDismissRequest is not passed, all three paths -- tapping outside, pressing back, platform window close -- no-op, and the dialog cannot be closed."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowDialog.kt:92
+    - text: "On Android this is a separate window. CompositionLocals inherit through the Dialog boundary, but system back events dispatch per window -- the component fixes this by re-resolving the dispatcher owner from this window's view tree via WindowNavigationEventScope. If you provide LocalNavigationEventDispatcherOwner yourself in content (e.g. manually wiring nav), you re-shadow this fix and the back key stops working."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowDialog.kt:96
+    - text: "The window uses decorFitsSystemWindows = false (Android) / usePlatformInsets = false (Skiko), so insets are no longer handled automatically; the component computes the top padding safeTopInset = max(statusBars, captionBar, displayCutout) itself. This is also extra logic WindowDialog has over OverlayDialog -- if you turn off defaultWindowInsetsPadding, the bottom/IME padding becomes entirely your own responsibility."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowDialog.kt:76
+    - text: "The platform default scrim and transition are explicitly cleared: on Skiko scrimColor = Transparent + animateTransition = false, on Android setWindowAnimations(0) + setDimAmount(0) + clearFlags(FLAG_DIM_BEHIND). This means when enableWindowDim = false there is truly no dimming at all (unlike M3's Dialog, which still has a platform scrim as a fallback)."
+      severity: low
+      evidence: miuix-core/src/skikoMain/kotlin/top/yukonga/miuix/kmp/utils/Utils.skiko.kt:29
+    - text: "There is no renderInRootScaffold parameter (the window is naturally full-screen), which conversely means you cannot confine the dialog within some Scaffold's boundary -- for that effect you can only use OverlayDialog(renderInRootScaffold = false)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowDialog.kt:71
+  visual:
+    same_as: "Identical to OverlayDialog (sharing DialogContentLayout / DialogDefaults): MaxWidth 420.dp, large-screen corner 32.dp, outsideMargin (12,12), insideMargin (24,24), large-screen height cap 2/3 of window height"
+    top_inset: "Extra top safe area = the top padding of max(statusBars, captionBar, displayCutout)"
+  state: "Same as OverlayDialog: purely controlled show, onDismissRequest is only a request. It additionally provides LocalDismissState once around content, but the inner DialogContentLayout provides it again, and both point to the same callback with identical behavior -- LocalDismissState is not exclusive to the Window variant, the Overlay version has it too."
+  m3: "Closest to androidx.compose.material3.AlertDialog / androidx.compose.ui.window.Dialog, both platform windows. Differences: M3's DialogProperties can configure dismissOnBackPress / dismissOnClickOutside / usePlatformDefaultWidth, while Miuix hardcodes these (the first two are false + implemented itself), and you can only express \"whether it can close\" via whether onDismissRequest is null; M3 has no title/summary parameters (BasicAlertDialog relies entirely on content), while Miuix provides two built-in slots title/summary."
+
+WindowBottomSheet:
+  summary: "A bottom sheet rendered as a platform Dialog window, needing no Scaffold. Its visuals, gestures, and animation are identical to OverlayBottomSheet (they share BottomSheetContentLayout)."
+  gotchas:
+    - text: "allowDismiss = false does not block LocalDismissState -- and here it is bypassed at two layers: the one WindowBottomSheet itself provides around content does not check allowDismiss, and the one the inner BottomSheetContentLayout overrides likewise does not. A close button in startAction / endAction can still close it."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowBottomSheet.kt:119
+    - text: "It has one more close path than the Overlay version: the platform Dialog's own onDismissRequest (desktop Esc, system window close, etc.). It is the only place here that checks allowDismiss, so when allowDismiss = false this path is correctly blocked -- but do not conclude from this that allowDismiss takes effect everywhere (see the previous entry)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowBottomSheet.kt:93
+    - text: "onDismissRequest is nullable and defaults to null: when null, the pull-down gesture still slides the sheet off screen but the callback no-ops, and the sheet is both invisible and uncloseable. Same origin as the Overlay version."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:182
+    - text: "The two header slots startAction / endAction are also injected with LocalDismissState (the Chinese docs are missing this subsection). Putting a close button in these two slots does not require passing onDismissRequest down."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:307
+    - text: "There is no large-screen branch at all; the docs' \"large-screen optimized animation\" is a mistaken sentence copied from the dialog page; the only wide-screen adaptation is sheetMaxWidth defaulting to 640.dp."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/BottomSheetContentLayout.kt:883
+  visual:
+    same_as: "Identical to OverlayBottomSheet: corner 28.dp, maxWidth 640.dp, outsideMargin (0,0), insideMargin (24,0), handle 45×4.dp (on press 55.dp / scaleY 1.15)"
+    top_inset: "Extra top safe area = the top padding of max(statusBars, captionBar, displayCutout)"
+  state: "Same as OverlayBottomSheet: controlled show + the component holds all gesture/animation state itself. BottomSheetDefaults is in the top.yukonga.miuix.kmp.layout package, not the window package, which is easy to get wrong on import."
+  m3: "Corresponds to androidx.compose.material3.ModalBottomSheet. Differences same as OverlayBottomSheet: no SheetState, no intermediate tiers, no suspend hide(); one extra point is that Miuix clears the platform Dialog's scrim and draws its own, while M3's scrim is built in."
+
+WindowListPopup:
+  summary: "An anchored list popup rendered as a platform Dialog window, needing no Scaffold and able to overflow the host boundary. Its positioning/animation are identical to OverlayListPopup (they share ListPopupLayout). In most cases it is the preferred list popup."
+  gotchas:
+    - text: "Align's four corner values all equal Start under the default provider -- same origin as OverlayListPopup (DropdownPositionProvider only checks == Align.End). For real corner positioning you must explicitly pass ListPopupDefaults.ContextMenuPositionProvider, and its semantics are relative to the window: TopStart/TopEnd put the popup below the anchor, BottomStart/BottomEnd put it above the anchor."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:250
+    - text: "The anchor is \"the parent layout node the call site sits in\" rather than an explicit anchor: internally it reverse-looks-up parentLayoutCoordinates via a zero-size Spacer. You must put WindowListPopup and the trigger button into the same parent container; when the parent coordinates cannot be obtained (IntRect.Zero) the whole popup simply does not render, with no error."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:127
+    - text: "onDismissRequest is nullable and defaults to null; without it, neither tapping outside nor the back key can close it; and the platform dismissOnBackPress is also hardcoded to false."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowListPopup.kt:57
+    - text: "popupModifier applies to the full-screen overlay rather than the popup card; the card's 16.dp corner and surfaceContainer background are hardcoded in ListPopupContent and cannot be changed."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:193
+    - text: "enableWindowDim = false only turns off the scrim; tapping outside still requests a close (the KDoc explicitly states outside-tap dismiss is unrelated to this switch)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/ListPopupLayout.kt:199
+    - text: "LocalDismissState is provided around content, so a menu item can close via LocalDismissState.current?.invoke() directly, without threading the callback through layers (the English/Chinese docs do not mention this on the Overlay page, only demonstrating it on the window page)."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowListPopup.kt:77
+  visual:
+    same_as: "Identical to OverlayListPopup: card 16.dp corner, surfaceContainer background, scale 0.15→1 + directional squircle clip reveal, MinWidth 200.dp, MinPopupHeight 50.dp, dim uses colorScheme.windowDimming"
+  state: "Controlled show, no internal expanded state; the animation tracks and anchor detection are held internally by the component. Inside content you can read LocalDismissState. When the popup closes the subtree unloads, and ListPopupColumn's scroll position is not retained."
+  m3: "Corresponds to androidx.compose.material3.DropdownMenu -- this is the one closest to M3 semantics among the two families (both open a platform Popup/Dialog and both can overflow the host). Differences: M3 has offset: DpOffset for fine tuning, Miuix can only swap the PopupPositionProvider; M3's anchor is the Box wrapping it, Miuix reverse-looks-up the parent layout node; M3's properties can configure whether tapping outside closes, Miuix relies on whether onDismissRequest is null."
+
+WindowCascadingListPopup:
+  summary: "A two-level cascading menu rendered as a platform Dialog window, needing no Scaffold. Its behavior is identical to OverlayCascadingListPopup (they share CascadingListPopupLayout), and depth is likewise hard-limited to 2 levels."
+  gotchas:
+    - text: "onDismissRequest is two-stage: when the second level is expanded, tapping outside / pressing back only collapses the second level and does not call onDismissRequest. Note that onDismissRequest here is required and non-null (unlike the nullable one on WindowListPopup / WindowDialog), so do not omit it out of habit from other components in the same family."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowCascadingListPopup.kt:46
+    - text: "children deeper than 2 are ignored, with only a single println warning (the file-level deeperChildrenWarned ensures it prints only once per process), not throwing an exception and not via Logger."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingMorphContent.kt:121
+    - text: "entries must keep a stable order while the popup is showing (internally the expanded item is tracked by entryIndex/itemIndex position); inserting/deleting/reordering makes the submenu jump items or collapse; an item's selected and other values can change."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:78
+    - text: "A first-level trigger item's DropdownItem.onClick is swallowed (having children means expand), while a second-level leaf item's onClick is called."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:326
+    - text: "The default alignment is Align.End (WindowListPopup is Start); at the same time the four corner values still all equal Start under the default provider."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/window/WindowCascadingListPopup.kt:50
+    - text: "Among the four window components, it is the only one that does not provide LocalDismissState around the outside (because it has no content slot at all), and the close entry point inside the popup comes entirely from the single provide inside CascadingListPopupLayout."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/CascadingListPopupLayout.kt:285
+  visual:
+    same_as: "Identical to OverlayCascadingListPopup: corner 16.dp, first-level dropShadow(24.dp / black 18% / offset y 6.dp), on expand the first level scale 0.95 + scrim, arrow rotates ∓90°, minWidth defaults to 200.dp"
+  state: "Controlled show + entries; the second-level expanded state is held internally by the component, which the outside can neither read nor control. onDismissRequest is required. entries should be remembered."
+  m3: "No equivalent."
+
+DropdownImpl:
+  summary: "A single-row rendering primitive inside dropdowns/menus (icon + title + summary + a trailing checkmark or arrow). Use it when hand-writing menu items inside ListPopupColumn, to keep the visuals consistent with the library's built-in menus."
+  gotchas:
+    - text: "There are two public overloads: the text: String version (simple) and the item: DropdownItem version (full). Only the item version has the three parameters hasSubmenu / isFirst / isLast, and the docs only include the text version, so when you need a submenu arrow or first/last padding across multiple groups you must use the item version."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:81
+    - text: "dialogMode: Boolean = false sits between enabled and onSelectedIndexChange, yet the property tables throughout the docs all omit it. Passing arguments positionally per the docs mis-slots the argument meant for onSelectedIndexChange into dialogMode and fails to compile. Always use named arguments."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:227
+    - text: "isFirst / isLast default to deriving from index == 0 and index == optionSize - 1, which is \"first/last within this group\". When assembling multiple DropdownEntry groups into one popup you must explicitly pass the popup-global first/last flags, otherwise the first and last rows of every group get the enlarged 20dp padding, visually adding several extra gaps."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:90
+    - text: "dialogMode = true is not just a background swap: the first/last rows no longer have the enlarged 20dp padding (all 12dp), horizontal padding changes from 20dp to 28dp, and it adds minHeight 56dp / minWidth 200dp / fillMaxWidth, and internally removes the 216dp text-width cap. Mistakenly passing true inside a popup deforms the whole column's layout."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:133
+    - text: "When hasSubmenu = true the trailing checkmark is replaced by a chevron and the accessibility role changes from RadioButton to Button (Dropdown.kt:149, :186-214). Here isSelected still changes the text color and chevron color (:120-124, :190-194), and the row background also uses selectedContainerColor (:107-111, which under the default dropdownColors() equals containerColor so is invisible, and under dialogDropdownColors() is tertiaryContainer), but you never see a checkmark. Do not use a hasSubmenu row to express \"selected\"."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:149
+    - text: "enabled defaults to item.enabled, but passing it explicitly fully overrides it (no AND is performed). The AND of DropdownEntry.enabled and item.enabled is done by the caller (the cascading layer) itself, so when hand-writing you must compute it yourself."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:87
+    - text: "DropdownItem has a public secondary constructor constructor(icon, title, summary) not documented anywhere, kept for compatibility with the deprecated SpinnerEntry. All three parameters have defaults, so DropdownItem() also compiles and yields text = empty string (when title is null it goes through title.orEmpty()) -- an empty text makes things like DropdownPreference not show a value because of text.isNullOrEmpty(). This constructor also gives you no access to enabled / selected / onClick / children, so normally always use the primary constructor and write text = explicitly."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:351
+  visual:
+    check_icon: "CheckIconSize 20.dp, start padding CheckIconStartPadding 12.dp"
+    chevron: "ChevronSize 10×16.dp (replaces the checkmark when hasSubmenu)"
+    icon_cell: "IconMinSize 26.dp, spacing from text IconEndPadding 12.dp"
+    text_width_cap: "MaxItemTextWidth 216.dp (popup mode only, removed under dialogMode)"
+    horizontal_padding: "popup mode InsideHorizontalPadding 20.dp; dialogMode DialogHorizontalPadding 28.dp"
+    vertical_padding: "first/last rows FirstLastVerticalPadding 20.dp, middle rows MiddleVerticalPadding 12.dp; all 12.dp under dialogMode"
+    dialog_mode_min: "MinHeight 56.dp / MinWidth 200.dp (dialogMode only)"
+  state: "A purely controlled display row with no internal state. The selected state is passed in via isSelected, and a tap passes back index to onSelectedIndexChange (not the item). Colors are all decided by DropdownColors, with DropdownDefaults.dropdownColors() for popups and dialogDropdownColors() for dialogs (the latter has a transparent containerColor and uses tertiaryContainer for the selected state)."
+  m3: "Corresponds to androidx.compose.material3.DropdownMenuItem. Differences: M3 uses three composable slots text / leadingIcon / trailingIcon + onClick, fully free; Miuix takes the DropdownItem data class, the trailing part can only be a \"checkmark\" or a \"chevron\", with no slot to swap; the selected semantics are built into Miuix (M3's DropdownMenuItem has no selected concept); the callback passes index rather than a no-arg onClick."
+
+DropdownArrowEndAction:
+  summary: "The up-down double-arrow indicator at the end of a dropdown/Spinner trigger row. It is an extension function on RowScope, meant for the row end of Preference-type components."
+  gotchas:
+    - text: "It is an extension function on RowScope (internally it uses align(Alignment.CenterVertically)) and can only be called within a Row scope. Putting it in a Column, a Box, or a top-level composable fails to compile, reporting an \"unresolved reference\" rather than a scope error, which is easily mistaken for a missing import."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:45
+    - text: "actionColor is required, has no default, and does not automatically take the theme color. The library's callers generally pass a color chosen by enabled state, so when using it yourself remember to handle the disabled state."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:46
+    - text: "It draws MiuixIcons.Basic.ArrowUpDown (an up-down double arrow, meaning \"switchable\"), not the ArrowRight chevron used by cascading/submenu rows. Their size constants happen to both be 10×16.dp (ArrowSize and ChevronSize), so do not conflate their semantics just because the sizes match."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:54
+  visual:
+    size: "10×16.dp (DropdownDefaults.ArrowSize, hardcoded inside the component)"
+    alignment: "internally fixed align(Alignment.CenterVertically)"
+  state: "Stateless, purely decorative. contentDescription is passed as null (invisible to screen readers), so the semantics must be carried by the row it sits in. It does not rotate with the expanded state."
+  m3: "Closest to ExposedDropdownMenuDefaults.TrailingIcon -- but M3's rotates 180° with expanded, while Miuix's is a static up-down double arrow whose meaning is \"this row can switch value\" rather than \"the menu is expanded\"."
+
+ListPopupColumn:
+  summary: "The content container for a list popup: it automatically aligns all children to the same width and comes with vertical scrolling. The content of the ListPopup family should basically always be filled with it."
+  gotchas:
+    - text: "The width counts only the maxIntrinsicWidth of the first 8 children (MAX_ITEMS_FOR_WIDTH = 8, to avoid a full-subtree intrinsic traversal). From the 9th item on, no matter how wide, it does not participate in width calculation and gets truncated or wrapped. This limit is a private const the KDoc does not mention at all. Putting the longest item within the first 8 works around it."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:92
+    - text: "The viewport height = the sum of the first 8 items' heights (the modifier chain is height(IntrinsicSize.Min) + verticalScroll, and minIntrinsicHeight only sums 8 items). This is intentional for height (an 8-row-high scrollable viewport), but \"item\" means a direct child measurable -- a divider and a cascading-menu cloned header each count as one item, so a three-group menu with 2 dividers actually shows only 6 rows."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:138
+    - text: "The width is hard-clamped between 200dp..288dp, and no matter how wide the content, it cannot grow past 288dp. Passing a larger minWidth to the outer popup does not help: ListPopupContent uses a plain Box (ListPopup.kt:607, propagateMinConstraints defaults to false), the minWidth ListPopupLayout sets in .layout (ListPopupLayout.kt:214) is relaxed away by it, so when ListPopupColumn measures, constraints.minWidth is always 0 and the bounds are the literals 200dp/288dp; the minIntrinsicHeight branch (ListPopup.kt:136) directly coerceIn(200dp, 288dp) on top of that. The component also has no maxWidth parameter -- for wider you can only skip ListPopupColumn and write your own equal-width container."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:91
+    - text: "There is already a verticalScroll inside, so do not wrap another scroll container outside or inside. More critically, you cannot stuff a LazyColumn / LazyRow in as a child: the custom MeasurePolicy calls maxIntrinsicWidth / minIntrinsicHeight on each child, and Lazy layouts do not support intrinsic measurement, so it throws directly."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:124
+  visual:
+    width: "Adaptive, equal to the max intrinsic width of the first 8 items, clamped to 200.dp..288.dp (the lower bound is also affected by the outer minWidth)"
+    height: "The sum of the first 8 children's heights; the overflow relies on the built-in verticalScroll"
+    layout: "Children are laid out top to bottom in order, all stretched to the same width; placeRelative handles RTL"
+  state: "An internal rememberScrollState manages scrolling and cannot be read or reset from outside. When the popup closes the whole subtree unloads (for both the Overlay/Window families), so on every reopen the scroll position starts from the top. There is also a Modifier.focusGroup(), the only focus handling in the entire popup system."
+  m3: "No direct equivalent. M3's DropdownMenu is internally a plain Column + verticalScroll, with neither \"all items equal width\" nor an 8-row viewport rule; to get the equal-width effect in M3 you must write IntrinsicSize.Max yourself."
+
+ListPopupContent:
+  summary: "The scale/fade-in/directional-clip container for a list popup card. It is a low-level primitive for custom popup hosts -- when using the ready-made OverlayListPopup / WindowListPopup you do not need to touch it directly."
+  gotchas:
+    - text: "All animation parameters are externally driven, and the component produces no progress itself. When fractionProgress returns 0 the scale is 0.15 and the clip height is 0 -- using it as a static card directly (without feeding progress) gives you something completely invisible. For static use you must pass { 1f }."
+      severity: high
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:612
+    - text: "The 16.dp corner and the surfaceContainer background are hardcoded in the function body, and the modifier parameter is inserted after the internal graphicsLayer and before the background -- a passed background modifier is covered by that internal background layer, so the card's appearance cannot be changed."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:604
+    - text: "popupContentSize and onPopupContentSizeChange are a pair of parameters that must form a closed loop: the callback happens in onGloballyPositioned, and only by storing the value back and passing it into popupContentSize does the internal \"only call back when the size changed\" comparison hold; breaking the loop causes a per-frame callback + recomposition storm."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:619
+    - text: "graphicsLayer must be written before the user modifier (a source comment cites issue #373: drawing-type modifiers written before graphicsLayer do not follow its transform). When assembling a similar container yourself, if you put graphicsLayer at the end of the chain, the background/border will not scale with it during animation."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:607
+  visual:
+    corner: "16.dp (hardcoded)"
+    background: "MiuixTheme.colorScheme.surfaceContainer (hardcoded)"
+    scale: "0.15f + 0.85f × fraction, transform origin taken from localTransformOrigin"
+    reveal: "A squircle clip band expanding along the popup direction: growing from the top when below the anchor, from the bottom when above, and from the middle toward both sides when centered; when squircle is off it degrades to a plain rounded rectangle"
+  state: "Fully controlled, no internal state. fractionProgress / alphaProgress are passed as () -> Float rather than Float, deferring the read to the draw phase to skip recomposition -- keep this form when calling it yourself and do not unpack to Float early. popupLayoutPosition and localTransformOrigin usually come from rememberListPopupLayoutInfo."
+  m3: "No equivalent."
+
+rememberListPopupLayoutInfo:
+  summary: "Computes \"anchor rect + content size + positioning strategy\" into the safe area, margins, transform origin, and popup direction needed to place the popup. Use it for custom popup hosts; you do not need to touch it when using ready-made components."
+  gotchas:
+    - text: "When popupContentSize is passed IntSize.Zero (not yet measured) it returns a \"predicted origin\" -- deriving the anchor's corresponding corner directly by alignment; only after measurement is done does it switch to a measured origin back-derived from the actual computed position. So the transformOrigin differs between the first and second frame, and caching it as a stable value shows a jump at the animation's start point."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:446
+    - text: "The popupLayoutPosition it returns is not a literal translation of the alignment you passed, but back-derived from the computed actual offset (comparing the popup center with the anchor center, comparing the left/right edge distances). When the popup is clamped by the boundary, or the vertical direction falls into the \"center on the anchor when neither above nor below fits\" branch, the back-derived result disagrees with the alignment you requested, and the animation origin changes accordingly."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:512
+    - text: "The safe-area accounting of windowBounds is: subtract displayCutout on the left/right, statusBars on top, navigationBars + captionBar on the bottom. The top boundary does not subtract the notch (in portrait it is covered by the status bar, in landscape the notch is on the sides). The desktop captionBar also counts toward the bottom boundary, which matters when the window title bar is at the bottom."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/ListPopup.kt:438
+  visual:
+    outputs: "windowBounds (safe-area rect), popupMargin (converted to px by provider.getMargins(), the default dropdown provider is vertical 8.dp / horizontal 0.dp), effectiveTransformOrigin (window coordinates), localTransformOrigin (0..1 normalized, fed directly to graphicsLayer), popupLayoutPosition (showBelow / showAbove / isRightAligned)"
+  state: "Pure computation + remember, no side effects, no internal mutable state. All branches recompute from the parameters and current insets; when containerSize is 0, safeTransformOrigin guards against NaN."
+  m3: "No equivalent. M3 uses the PopupPositionProvider interface + Popup positioning itself, and does not expose animation info like the transform origin/popup direction."
+
+SpinnerItemImpl:
+  summary: "A deprecated (DeprecationLevel.WARNING) Spinner single-row rendering function, now just a thin alias for DropdownImpl(item = ...). New code should always use DropdownImpl directly."
+  gotchas:
+    - text: "The entire Spinner naming family is deprecated and unified into Dropdown: SpinnerItemImpl → DropdownImpl, SpinnerEntry → DropdownItem (typealias), SpinnerColors → DropdownColors (typealias), SpinnerDefaults → DropdownDefaults. When you see Spinner* in old code, just migrate per replaceWith; the runtime behavior is identical."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:254
+    - text: "The parameter names differ from DropdownImpl (entry / entryCount / spinnerColors correspond to item / optionSize / dropdownColors), so migration cannot just rename the function; and spinnerColors has no default and must be passed explicitly, whereas DropdownImpl's dropdownColors has a default."
+      severity: medium
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:269
+    - text: "It hardcodes enabled to entry.enabled and forwards it, with no separate enabled parameter -- making a row \"data available but temporarily untappable\" is impossible in this function, so you must switch to DropdownImpl."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:279
+    - text: "When forwarding it does not pass hasSubmenu / isFirst / isLast and always takes the defaults (isFirst = index == 0, isLast = index == entryCount - 1). Using it in a multi-group scenario means you cannot get the popup-global first/last padding control."
+      severity: low
+      evidence: miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/Dropdown.kt:273
+  visual:
+    same_as: "Exactly the same as DropdownImpl (it only forwards): checkmark 20.dp, popup horizontal padding 20.dp, first/last 20.dp / middle 12.dp vertical padding, under dialogMode horizontal 28.dp, vertical all 12.dp, minHeight 56.dp"
+  state: "Stateless, pure forwarding. onSelectedIndexChange passes back index."
+  m3: "No equivalent (M3 has no Spinner concept; semantically it is still DropdownMenuItem)."

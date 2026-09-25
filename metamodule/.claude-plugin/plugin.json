@@ -1,0 +1,10 @@
+{
+  "name": "metamodule",
+  "description": "Develop a metamodule: the pluggable mount/install backend for KernelSU (and APatch) modules — metamount.sh / metainstall.sh / metauninstall.sh, the boot order, the source=KSU rule, and the install-block state.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": { "name": "yspbwx2010" },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": ["metamodule", "kernelsu", "apatch", "android", "overlayfs", "systemless", "module"],
+  "skills": "./skills/"
+}

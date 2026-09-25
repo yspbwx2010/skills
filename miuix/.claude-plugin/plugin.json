@@ -1,0 +1,10 @@
+{
+  "name": "miuix",
+  "description": "Build Compose Multiplatform apps with Miuix (Xiaomi HyperOS-style UI): project scaffold, source-extracted signatures for every component, and the traps that make Miuix code fail to compile or look wrong.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": { "name": "yspbwx2010" },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": ["miuix", "compose-multiplatform", "kotlin", "android", "hyperos", "jetpack-compose"],
+  "skills": "./skills/"
+}
