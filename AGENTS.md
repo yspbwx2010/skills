@@ -19,6 +19,7 @@ installs on its own:
 | xlings | [xlings/](xlings/AGENTS.md) | Use the xlings package manager; write xim-pkgindex packages |
 | mcpp-style-ref | [mcpp-style-ref/](mcpp-style-ref/AGENTS.md) | Modern/Module C++ (C++23) coding style, copied from upstream (CC BY-NC-SA 4.0) |
 | gki | [gki/](gki/AGENTS.md) | Build Android GKI (ACK 6.1 to 6.18) kernel modules and make KMI-safe kernel changes |
+| docs-style | [docs-style/](docs-style/AGENTS.md) | Write English developer docs in a style adapted from the Google developer documentation style guide (CC BY 4.0) |
 
 Before changing anything in `<skill>/`, read `<skill>/AGENTS.md`. It says what that skill is for
 and holds its rules. Run a skill's commands from its own directory.

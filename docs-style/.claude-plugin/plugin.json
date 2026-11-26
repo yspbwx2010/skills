@@ -1,0 +1,20 @@
+{
+  "name": "docs-style",
+  "description": "Write and review English developer docs in a style adapted from the Google developer documentation style guide, with a Chinese supplement, a word list and a report-only checker; facts from the source outrank style.",
+  "version": "0.1.0",
+  "license": "CC-BY-4.0",
+  "author": {
+    "name": "yspbwx2010"
+  },
+  "repository": "https://github.com/yspbwx2010/skills",
+  "keywords": [
+    "documentation",
+    "technical-writing",
+    "style-guide",
+    "google-developer-style",
+    "readme",
+    "api-docs",
+    "chinese"
+  ],
+  "skills": "./skills/"
+}

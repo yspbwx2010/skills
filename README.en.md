@@ -18,6 +18,7 @@ Each skill installs on its own, take only the ones you want
 | [xlings](xlings/README.en.md) | Use the [xlings](https://github.com/openxlings/xlings) package manager; write xim-pkgindex packages |
 | [mcpp-style-ref](mcpp-style-ref/README.en.md) | Modern / Module C++ (C++23) coding style |
 | [gki](gki/README.en.md) | Write Android GKI kernel modules; change the kernel without breaking the KMI |
+| [docs-style](docs-style/README.en.md) | Write English developer docs in a style adapted from the Google developer documentation style guide, with a Chinese supplement |
 
 ## Install
 
@@ -51,4 +52,4 @@ For the full layout and the steps to add a skill, see [AGENTS.md](AGENTS.md)
 
 ## License
 
-[MIT](LICENSE), except [mcpp-style-ref](mcpp-style-ref/README.en.md) (CC BY-NC-SA 4.0, copied from upstream)
+[MIT](LICENSE), except [mcpp-style-ref](mcpp-style-ref/README.en.md) (CC BY-NC-SA 4.0, copied from upstream) and [docs-style](docs-style/README.en.md) (CC BY 4.0, adapted from the Google developer documentation style guide)
