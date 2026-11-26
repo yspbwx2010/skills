@@ -1,0 +1,238 @@
+# word_list.tsv: terms for scripts/check_style.py. Columns: term<TAB>guidance<TAB>replacement.
+# A term field can hold variants split by '|' (the first is shown in messages). Matching is whole-word and case-insensitive;
+# a capitalized hit in mid-sentence is skipped unless the term itself has capitals (proper nouns).
+# Adapted from the word list of the Google developer documentation style guide (CC BY 4.0), paraphrased.
+# The rows after the word-list rows are terms that came up often when the skill was tested.
+# A guidance that starts with "skill row" is a term Google's list doesn't cover; the skill added it.
+# Skipped table entries that say avoid or don't use, because a literal whole-word match would misfire on correct text:
+#   abort: common API and signal term
+#   above: context-dependent; handled by the position rule in the script
+#   below: context-dependent; handled by the position rule in the script
+#   access (verb): noun use is fine; handled by a context pattern in the script
+#   -aware: compound modifier, no mechanical test
+#   abnormal: ok for system state
+#   canary: define if used; no mechanical test
+#   careful, carefully: plain English, but too common in warnings to flag mechanically
+#   check (checkbox): only wrong in checkbox sense
+#   chubby: also a product name
+#   CLI: only wrong used generically
+#   cold (failover): jargon, no mechanical test
+#   hot (failover): jargon, no mechanical test
+#   warm (failover): jargon, no mechanical test
+#   compliant: use with caution; no mechanical test
+#   cons: also an identifier; only the phrase pros and cons is clear
+#   pros: see cons
+#   dash: only about hyphens
+#   first-class: legitimate in language docs (first-class functions)
+#   functionality: use with caution; too common
+#   future: judgment (info-level timeless-info only)
+#   Google (verb): needs sense disambiguation
+#   health check: use with caution; no mechanical test
+#   hit (key): other senses (cache hit)
+#   holiday: context
+#   impact (verb): noun use is fine
+#   interface (verb): noun use is fine
+#   key (adjective): noun use is fine
+#   latest: fine when anchored by a version or date
+#   master: git branch names
+#   method: generic use, no mechanical test
+#   mobile (noun): adjective use is fine
+#   native: legitimate (native implementation)
+#   new, newer: info-level timeless-info only
+#   now: info-level timeless-info only
+#   old, older: info-level timeless-info only
+#   once (after): context pattern in the script
+#   since (reason): context pattern in the script
+#   while (contrast): context pattern in the script (info-level)
+#   as (reason): no reliable pattern
+#   outpost: also a product name
+#   path: no mechanical test
+#   persist (transitive): no reliable pattern
+#   possible: judgment
+#   surface (verb): noun use is fine
+#   target (verb): noun use is fine
+#   under (UI): UI sense only
+#   UI: only wrong used generically
+#   with (ownership/use): no reliable pattern
+#   downscope: rare
+#   Black Friday: rare
+#   Cyber Monday: rare
+#   billing charges: cloud billing only
+#   STONITH: rare
+#   Representational State Transfer: rare
+#   RDP (verb): rare
+#   redline (verb): rare
+#   blackhole (verb): noun use is fine
+#   break-glass: rare
+#   will: fine for real future events
+#   type (keys): context pattern in the script
+# Table entries that only state a spelling or usage rule (one word, hyphenation, 'use X') are left to the script's pattern checks or not checked.
+
+&	avoid in prose, headings, nav; ok in UI labels, tight tables, code	and
+account name	don't use	username
+actionable	avoid	useful, "that you can act on", or drop
+agnostic	don't use	platform-independent
+aka	don't use	also known as, or parentheses
+allows you to|allow you to|allowing you to|allowed you to	don't use	lets you
+and so on	avoid	including, such as
+and/or	avoid except in tight tables	
+anti-pattern|anti-patterns|antipattern	avoid esp. in headings	specific description
+as of this writing	avoid, timeless docs	drop
+authn|authz	don't use abbreviations	authentication, authorization
+autoupdate	don't use	automatically update
+best effort	avoid	specific wording
+black-box|blackbox	avoid	opaque-box testing, synthetic monitoring
+blackhat	don't use	illegal, unethical
+blacklist|blacklists|blacklisted|blacklisting	don't use	denylist, blocklist, excludelist
+blast radius	don't use	affected area
+blindly	avoid figurative use	ignore, unaware of, without confirming
+brown bag	don't use	learning session
+build cop	don't use	build monitor
+cell phone|cell phones	don't use	mobile phone, phone
+cellular data	don't use	mobile data
+cellular network	don't use	mobile network
+click here	don't use	descriptive link text
+comprise|comprises|comprised|comprising	don't use	consist of, contain, include
+config|configs	avoid in prose	configuration
+copy and paste	avoid	say what to enter
+could	avoid	can
+crazy	don't use	complicated, unexpected
+create a new	avoid	Create a
+cripple|cripples|crippled|crippling	don't use	slowed, specific
+currently	avoid	drop
+demilitarized zone	don't use	perimeter network
+denigrate	don't use	disparage
+deselect|deselects|deselected	don't use	clear
+desire|desired	don't use	want, need
+disclosure triangle	don't use	expander arrow
+does not yet|doesn't yet|do not yet|don't yet	avoid	drop
+dojo	don't use	training, workshop
+dumb down	don't use	simplify
+dummy variable	don't use	placeholder
+e.g.	don't use	for example, such as
+easy|easily	avoid	drop
+etc.	avoid; with period always	
+eventually	avoid	drop
+female adapter	don't use	socket
+final solution	don't use	solution
+foo	avoid	meaningful placeholder
+baz	avoid as placeholder	clearer name
+for instance	don't use	for example
+gender-neutral he	don't use	they
+ghetto	don't use	clumsy, workaround
+gimp	don't use	specific deficiency
+grandfathered	don't use	legacy, exempt
+gray-box|graybox	avoid	translucent-box testing
+grayed-out|greyed-out	don't use	unavailable
+graylist	don't use	provisional list
+guru	avoid	expert, teacher
+guys	don't use	everyone, folks
+gypsy	don't use	Romani, Roma
+hamburger menu	don't use	aria-label of icon
+hands-off	avoid	automated
+hands-on	avoid	customizable, describe it
+hang|hangs|hung|hanging	don't use for unresponsive	stop responding
+healthy	don't use	responsive
+housekeeping	don't use	maintenance, cleanup
+hover|hovers|hovering|hovered	don't use	hold the pointer over, point to
+i.e.	don't use	that is
+in order to	avoid unless clarity	to
+just	avoid	drop, only
+k8s	don't use	Kubernetes
+kebab case	don't use	dash-case
+kebab menu	don't use	aria-label
+kill|kills|killed|killing	avoid	stop, exit, cancel, end
+lame	don't use	specific deficiency
+learnings	don't use	knowledge, what you learned
+left-nav	don't use directional	navigation menu
+let's|let us	avoid	
+leverage|leverages|leveraged|leveraging	avoid	use, build on, take advantage of
+male adapter	don't use	plug
+man hours|man-hours	avoid	person hours
+man-in-the-middle	avoid	on-path attacker, person-in-the-middle
+manmade	avoid	artificial, synthetic
+manned	avoid	staffed
+manpower	avoid	staff, workforce
+MIME type|MIME types	don't use	media type
+mom test	don't use	beginner user test
+monkey test	don't use	automated random test
+navigation bar	don't use for menu	navigation menu
+ninja	don't use for person	expert
+noops	don't use	fully managed
+nuke|nukes|nuked	don't use	remove
+off-the-shelf	avoid	ready-made, prebuilt
+omnibox	don't use	address bar
+outside the box	avoid figurative	
+performant	avoid	precise term
+pets versus cattle|pets vs. cattle	don't use	persistent versus dynamic
+please	avoid except apology or favor	
+pop-up|pop-ups|popup|popups	don't use	dialog, menu
+postmortem|post-mortem	avoid	retrospective
+preferred pronouns	don't use	pronouns
+presently	avoid	drop
+proper|properly	avoid	technical detail
+quick|quickly	avoid	drop
+regex|regexes	don't use	regular expression
+repo|repos	don't use	repository
+retarded	don't use	slowed
+retriable	don't use	can be tried again
+rtfm	don't use	see
+sane	don't use	valid
+sanity check|sanity checks	don't use	quick check, coherence check
+sexy	don't use	fast, powerful
+shall	avoid	
+sherpa	avoid	guide
+shift left	avoid	shift earlier
+should	avoid	
+sign into|signs into|signed into	don't use	sign in to
+simple|simply	avoid	drop
+single pane of glass	avoid	single interface
+slave|slaves	don't use	worker, replica
+slice and dice	don't use	segment data
+smartphone|smartphones	don't use	mobile phone
+soon	avoid	drop
+spin up|spins up|spun up|spinning up	avoid	create, start
+tarball|tarballs	don't use	tar file
+text box|text boxes	don't use	box
+timeframe	avoid	period, schedule
+tl;dr	don't use	To summarize
+traditional	avoid	conventional, specific
+tribal knowledge	don't use	group knowledge
+unarchive	don't use	extract
+uncheck|unchecks|unchecked	don't use	clear
+uncompress	don't use	extract
+unselect	don't use	clear, deselect
+untar	don't use	extract
+unzip	don't use	extract
+utilize|utilizes|utilized|utilizing	don't use for use	use
+via	don't use	through, by
+vice versa	don't use	explicit relationship, conversely
+voila|voilà	don't use	
+voodoo	don't use	mysterious, nondeterministic
+vs.	don't use	versus
+war room	don't use	response team
+webmaster	don't use	website owner
+white glove	avoid	high-touch, premium
+white label	don't use	unbranded
+white-box|whitebox	avoid	clear-box testing
+whitehat	don't use	legal, ethical
+whitelist|whitelists|whitelisted|whitelisting	don't use	allowlist, safelist
+wish|wishes	don't use	want, need
+world wide web	don't use	web
+would	avoid	can
+ymmv	don't use	Your results might vary
+zippy	don't use	expander arrow
+may	official policy only	can, might
+we	not for reader tasks; ok for authoring org	you
+file name|file names	write as one word	filename
+trade-off|trade-offs	closed compound (punctuation-18)	tradeoff
+log in|logs in|log-in|logged in as|logged-in	use sign in; the table says log in is not the verb (keep log in only where the product UI says so)	sign in
+this page|this article	refer to the document as this document	this document
+docset	not docset	documentation set
+from now on|in the future	timeless wording; drop it (release notes are exempt; "from now on" is a skill row, not Google's)	
+falls back|fall back to|fell back	skill row: phrasal verb; say what the software does	uses ... instead
+pulls in|pull in|pulled in	skill row: phrasal verb	installs, loads, includes
+gets to work|get to work	skill row: idiom	starts
+you're ready to go|you are ready to go	skill row: upbeat closer; drop it	
+refuses to|refuse to|refused to	human verb for software (grammar-39)	does not start, returns an error
+gives up|give up|gave up	human verb for software (grammar-39)	times out, stops

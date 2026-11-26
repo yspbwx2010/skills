@@ -1,5 +1,9 @@
 # Vendor hooks (`android_vh_*` / `android_rvh_*`)
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Pinned to OGKI `android15-6.6` (Linux 6.6.118, `KMI_GENERATION=8`, `gki_defconfig`, arm64, clang-r510928).
 Counts and config facts below come from that tree and its `gki_defconfig` build. Re-verify on your tree
 with the commands given. The hooks themselves, grouped by subsystem, are in [hook-catalog.md](hook-catalog.md).
@@ -176,7 +180,7 @@ What to do, in order:
    interface. The only layout that is correct is the one from the exact source and config the device
    kernel was built from.
 
-`task_struct` carries `android_vendor_data1[64]` and `android_oem_data1[6]` (`ANDROID_VENDOR_DATA_ARRAY` /
+`task_struct` carries `android_vendor_data1[64]` (6.1/6.6; `[6]` on 6.12/6.18) and `android_oem_data1[6]` (`ANDROID_VENDOR_DATA_ARRAY` /
 `ANDROID_OEM_DATA_ARRAY`, `CONFIG_ANDROID_VENDOR_OEM_DATA=y`). These are a **shared convention space**
 used by SoC and OEM modules. They are not free slots for a third-party module. Seeing no user in the
 source does not mean that a device's vendor modules leave a slot unused. Do not store state there unless

@@ -1,5 +1,9 @@
 # Extending the kernel without breaking the KMI
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Facts are from the OGKI `android15-6.6` tree (Linux 6.6.118, `gki_defconfig`, arm64). Background on
 what breaks the KMI and why is in `kmi-breaking-changes.md`. `$KERNEL_SRC` is the kernel source tree.
 `$KERNEL_OUT` is the output directory of a **full** build, holding `.config`, `vmlinux` and a
@@ -58,7 +62,11 @@ is still not automatically safe. The two sections below explain why.
 
 In `task_struct` (`include/linux/sched.h`):
 `ANDROID_VENDOR_DATA_ARRAY(1, 64)` → `u64 android_vendor_data1[64]` at byte 3008, and
-`ANDROID_OEM_DATA_ARRAY(1, 6)` → `u64 android_oem_data1[6]` at byte 3520.
+`ANDROID_OEM_DATA_ARRAY(1, 6)` → `u64 android_oem_data1[6]` at byte 3520 (6.6.118 offsets).
+
+**The array size is per branch:** `android_vendor_data1[64]` on 6.1 and 6.6, **`[6]`** on 6.12 and
+6.18 (`android_oem_data1[6]` on all four). An index that is valid on 6.6 can be out of bounds on 6.12+;
+`static_assert` the size and offset on every branch you build for.
 
 In-tree users in 6.6.118 (verified by reading the source):
 

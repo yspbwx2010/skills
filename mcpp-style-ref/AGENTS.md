@@ -10,7 +10,7 @@ naming, module and `.cppm`/`.cpp` organisation, `import std`, and everyday idiom
 
 This is the upstream skill from the mcpp community's
 [mcpp-style-ref](https://github.com/mcpp-community/mcpp-style-ref), taken at commit `c9ddaf7`
-(2026-03-10). It is licensed **CC BY-NC-SA 4.0**, not MIT like the rest of this repository; the
+(2026-03-10). It is licensed **CC BY-NC-SA 4.0**, not MIT like most of this repository; the
 licence text ships as `skills/mcpp-style-ref/LICENSE`.
 
 Changes from upstream, kept to what this repository's layout requires:

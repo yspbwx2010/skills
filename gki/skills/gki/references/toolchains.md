@@ -1,10 +1,15 @@
 # Toolchains and the module build command
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 ## 1. Use the kernel branch's toolchain
 
 Build the kernel and every module with the clang prebuilt pinned by the **ACK kernel branch**, not the
 clang listed in the AOSP platform (userspace) release tables. The branch pins it in
-`build.config.constants` (`CLANG_VERSION=r510928` for `android15-6.6`).
+`build.config.constants` (`CLANG_VERSION=r510928` for `android15-6.6`; 6.18 also has
+`bazel/constants.scl`). 6.12 and 6.18 also pin `RUSTC_VERSION` there (1.82.0.p2, 1.91.1.p3).
 
 | ACK branch | Clang | LLVM | Kernel-build prebuilts branch |
 |---|---|---|---|
@@ -13,6 +18,7 @@ clang listed in the AOSP platform (userspace) release tables. The branch pins it
 | android14-5.15 / 6.1 | r487747c | 17.0.2 | main-kernel-build-2023 |
 | android15-6.6 | r510928 | 18.0.0 | main-kernel-build-2024 |
 | android16-6.12 | r536225 | 19.0.1 | main-kernel-2025 |
+| android17-6.18 | r584948c | verify | verify |
 
 This is a baseline verified when written, not a permanent mapping: confirm with the branch's
 `build.config.constants`. A `clang-rNNNNNN` directory missing from a prebuilts branch tip may still exist
@@ -66,10 +72,15 @@ type hashes, and the kernel's first indirect call into one traps (inferred). See
 Whether Rust is needed or possible depends on `CONFIG_RUST`, not on the kernel version ("6.12+" is not
 the rule).
 
-- In this `android15-6.6` `gki_defconfig` build `CONFIG_RUST` cannot be enabled: `init/Kconfig` has
-  `config RUST` depend on `!MODVERSIONS` and `!SHADOW_CALL_STACK` (both are `y`), and the ACK top-level
-  `Makefile` stops with `Enabling Rust and CFI silently changes the KMI.` if `CONFIG_RUST` and
-  `CONFIG_CFI_CLANG` are both set.
+- **6.1:** cannot be enabled: `config RUST` depends on `!CFI_CLANG`, `!MODVERSIONS` and
+  `!SHADOW_CALL_STACK`, all `y` in `gki_defconfig`.
+- **6.6:** cannot be enabled: `config RUST` depends on `!MODVERSIONS` and `!SHADOW_CALL_STACK` (both
+  `y`), and the ACK top-level `Makefile` stops with `Enabling Rust and CFI silently changes the KMI.` if
+  `CONFIG_RUST` and `CONFIG_CFI_CLANG` are both set.
+- **6.12 / 6.18:** `gki_defconfig` sets `CONFIG_RUST=y`. MODVERSIONS works through
+  `CONFIG_GENDWARFKSYMS=y` (`depends on !MODVERSIONS || GENDWARFKSYMS`), and CFI through
+  `CFI_ICALL_NORMALIZE_INTEGERS` (`select ... if CFI_CLANG`, `CFI` on 6.18). Build Rust modules with
+  the branch's pinned rustc; Rust has no stable ABI, so a rustc change is a compiler change.
 - `CONFIG_RUST_IS_AVAILABLE=y` only means a usable `rustc` was found; it does not enable Rust.
 - When a branch does use Rust, use the Rust prebuilt that branch pins, like clang.
 

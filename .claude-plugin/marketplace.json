@@ -20,7 +20,7 @@
     },
     {
       "name": "apm",
-      "description": "Build Magisk modules: standard Magisk-style systemless modules as used by APatch \u2014 module.prop, the customize.sh install flow, overlayfs systemless /system changes, boot scripts, WebUI",
+      "description": "Build Magisk-style systemless modules for APatch and KernelSU (metamodule era) \u2014 module.prop, the customize.sh install flow, systemless /system changes, boot scripts, WebUI",
       "source": "./apm",
       "category": "development"
     },
@@ -50,8 +50,14 @@
     },
     {
       "name": "gki",
-      "description": "Build Android GKI kernel modules and make KMI-safe kernel changes (android15-6.6, KMI 8): symbol lists, the MODULE_SIG_PROTECT gate, KCFI-safe callbacks, vendor hooks, kprobes, what a self-built kernel must keep",
+      "description": "Build Android GKI kernel modules and make KMI-safe kernel changes (ACK android14-6.1 to android17-6.18, per-branch facts): symbol lists, the MODULE_SIG_PROTECT gate, KCFI-safe callbacks, vendor hooks, kprobes, what a self-built kernel must keep",
       "source": "./gki",
+      "category": "development"
+    },
+    {
+      "name": "docs-style",
+      "description": "Write and review English developer docs in a style adapted from the Google developer documentation style guide (CC BY 4.0): facts from the source outrank style, project rules and the author's voice outrank the skill; with a word list, topic references, a Chinese supplement and a report-only checker.",
+      "source": "./docs-style",
       "category": "development"
     }
   ]

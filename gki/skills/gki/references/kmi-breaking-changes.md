@@ -1,5 +1,9 @@
 # KMI: what it is made of and what breaks it
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Facts below come from the OGKI `android15-6.6` tree (Linux 6.6.118, `KMI_GENERATION=8`,
 `gki_defconfig`, arm64) and a plain `make gki_defconfig` build of it. Re-check them on your own tree
 with the command in the last column; config-dependent facts change with the build.
@@ -147,6 +151,11 @@ certification gate.
   (not verified by running it: the command line and exit codes are unknown here)
 
 ### `__GENKSYMS__`: changes hidden from the CRC
+
+> 6.1 and 6.6 only. 6.12 and 6.18 set `CONFIG_GENDWARFKSYMS=y`: CRCs are computed from DWARF, and
+> `include/linux/android_kabi.h` no longer uses `__GENKSYMS__` (it emits gendwarfksyms KABI rules into
+> `.discard.gendwarfksyms.kabi_rules`). Read that header in your tree before assuming any change is
+> CRC-invisible there.
 
 genksyms defines `__GENKSYMS__` while preprocessing. The kernel uses it to make a change invisible to
 the CRC. `include/linux/android_kabi.h`:
@@ -364,7 +373,10 @@ private scheduler structs in the `.stg` (`struct rq`, `struct cfs_rq`; see §1).
 #endif
 ```
 
-`SLIM_SCHED` is `default n` in `kernel/Kconfig.preempt`, but `gki_defconfig` sets it to `y` (verified).
+`SLIM_SCHED` is `default n` in `kernel/Kconfig.preempt`, but `gki_defconfig` sets it to `y` (verified on the
+OGKI 6.6 tree). **`CONFIG_SLIM_SCHED` is OnePlus OGKI only:** it does not exist in ACK `include/linux/sched.h`
+on 6.1, 6.6, 6.12 or 6.18. The mechanism (an OEM option that reinterprets KABI slots with identical CRCs)
+is what to look for in any OEM tree.
 
 - With `y`, byte offset 3576 is `sched_prop` (an integer) and `dmabuf_info` is in slot 3.
 - With `n`, the same offset 3576 is `dmabuf_info` (a pointer), and slots 2 and 3 are empty.

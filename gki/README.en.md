@@ -4,7 +4,7 @@
 
 Teach your Coding Agent to write out-of-tree kernel modules for **Android GKI** (Generic Kernel Image) and to change the kernel without breaking the **KMI** (Kernel Module Interface): the stock vendor modules on the device bind to the KMI, fail to load when a symbol, CRC or struct layout does not match, and are not proven compatible when they do
 
-Targets **OGKI android15-6.6** (OnePlus's common kernel tree for ACK `android15-6.6`), Linux 6.6.118, KMI generation 8, `gki_defconfig`, arm64. Every count, config value and hook signature is read from the kernel source and a real `gki_defconfig` build, and every config-dependent finding comes with the command that re-checks it on your own tree
+Covers ACK **android14-6.1, android15-6.6, android16-6.12 and android17-6.18** (`gki_defconfig`, arm64). The detailed numbers come from one tree, **OGKI android15-6.6** (OnePlus's common kernel tree for ACK `android15-6.6`), Linux 6.6.118, KMI generation 8: every count, config value and hook signature there is read from the kernel source and a real `gki_defconfig` build. The differences on the other branches are read from the ACK source at fixed tags, and anything not checked against a build is marked `verify`. Every config-dependent finding comes with the command that re-checks it on your own tree
 
 ## What it does
 
@@ -14,7 +14,8 @@ Targets **OGKI android15-6.6** (OnePlus's common kernel tree for ACK `android15-
 - **Vendor hooks**: declared, exported, actually called and registrable at runtime are four separate facts; plain vs restricted hooks (the latter cannot be unregistered, have 2 slots per hook, and pin the module forever); a hook catalog by subsystem with the useful signatures
 - **Choosing a path**: out-of-tree module, vendor hook, kprobe, defconfig change, source patch, in that order
 - **What a self-built kernel must keep**: the must-keep configs and layouts, what may be relaxed, why vendor/OEM data slots are not free, and a pre-change checklist
-- **Templates**: two buildable modules under `assets/` (a kprobe with a reboot notifier, two plain vendor hooks), compiled warning-free against a 6.6.118 build
+- **Branch differences**: `references/branches.md` lists, per branch, the toolchain, KMI generation, Rust (available from 6.12), how CRCs are generated (gendwarfksyms from 6.12), the symbol gate and the vendor-data slot sizes, each with its source
+- **Templates**: two buildable modules under `assets/` (a kprobe with a reboot notifier, two plain vendor hooks), compiled warning-free against a 6.6.118 build; not compiled on the other branches
 
 ## Install
 
@@ -34,7 +35,7 @@ or copy `gki/skills/gki/` into your agent's skills directory (`~/.claude/skills/
 ## What the code it produces needs
 
 - The kernel source tree and the output directory of a full build of it (`.config` and a complete `Module.symvers`; `make Image` alone is not enough)
-- The clang the ACK branch pins (clang-r510928 / LLVM 18.0.0 for android15-6.6)
+- The clang the ACK branch pins (clang-r510928 / LLVM 18.0.0 for android15-6.6; other branches in `references/branches.md`), plus the branch's rustc for Rust modules on 6.12 and later
 - An arm64 device running a kernel built from that source; a stock OEM kernel usually trims symbols and enforces the symbol gate, so the local-build freedoms do not hold there
 
 ## License

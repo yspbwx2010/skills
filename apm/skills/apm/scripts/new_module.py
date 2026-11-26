@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scaffold an APatch module (APM) in an empty directory.
+"""Scaffold an APatch / KernelSU module (APM) in an empty directory.
 
     new_module.py <dir> --id my_module --name "My Module" [--author you] [--description "..."]
                         [--zip]
@@ -18,12 +18,12 @@ ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9._-]+$")  # apd's rule, enforced at inst
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Scaffold an APatch module (APM).")
+    ap = argparse.ArgumentParser(description="Scaffold an APatch / KernelSU module (APM).")
     ap.add_argument("dir", help="target directory (must be empty or not exist)")
     ap.add_argument("--id", required=True, help="module id (^[a-zA-Z][a-zA-Z0-9._-]+$)")
     ap.add_argument("--name", required=True)
     ap.add_argument("--author", default="you")
-    ap.add_argument("--description", default="An APatch module")
+    ap.add_argument("--description", default="An APatch / KernelSU module")
     ap.add_argument("--zip", action="store_true", help="also build a flashable <id>.zip")
     args = ap.parse_args()
 
@@ -59,7 +59,7 @@ def main() -> int:
 
     print(f"Created APM skeleton in {dst}\n"
           f"  id={args.id}\n"
-          f"Add files under system/ to overlay /system; edit service.sh for boot work.\n"
+          f"Add files under system/ to overlay /system (needs a mounting metamodule); edit service.sh for boot work.\n"
           f"Pack for flashing:  cd {dst} && zip -r ../{args.id}.zip . -x '.*'")
     return 0
 

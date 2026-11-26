@@ -18,6 +18,7 @@
 | [xlings](xlings/README.md) | 用 [xlings](https://github.com/openxlings/xlings) 包管理器, 给 xim-pkgindex 打包 |
 | [mcpp-style-ref](mcpp-style-ref/README.md) | Modern / Module C++ (C++23) 编码风格 |
 | [gki](gki/README.md) | 给 Android GKI 内核写模块, 改内核不破坏 KMI |
+| [docs-style](docs-style/README.md) | 按改编自 Google 开发者文档风格指南的规则写英文开发者文档, 附中文补充 |
 
 ## 安装
 
@@ -51,4 +52,4 @@ npx skills add yspbwx2010/skills --list      # 查看仓库里的全部 skill
 
 ## 许可证
 
-[MIT](LICENSE), [mcpp-style-ref](mcpp-style-ref/README.md) 除外 (CC BY-NC-SA 4.0, 取自上游)
+[MIT](LICENSE), 以下两个除外: [mcpp-style-ref](mcpp-style-ref/README.md) (CC BY-NC-SA 4.0, 取自上游), [docs-style](docs-style/README.md) (CC BY 4.0, 改编自 Google 开发者文档风格指南)

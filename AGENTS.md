@@ -13,12 +13,13 @@ installs on its own:
 | --- | --- | --- |
 | miuix | [miuix/](miuix/AGENTS.md) | Build Compose Multiplatform apps with the Miuix UI library |
 | kpm | [kpm/](kpm/AGENTS.md) | Write/build/load KernelPatch Modules (KPM) for the arm64 kernel |
-| apm | [apm/](apm/AGENTS.md) | Build Magisk modules: standard Magisk-style systemless modules as used by APatch |
+| apm | [apm/](apm/AGENTS.md) | Build Magisk-style systemless modules for APatch and KernelSU |
 | metamodule | [metamodule/](metamodule/AGENTS.md) | Develop a metamodule: the mount/install backend for KernelSU/APatch modules |
 | mcpp | [mcpp/](mcpp/AGENTS.md) | Build C++23 module projects with mcpp; package libraries for mcpp-index |
 | xlings | [xlings/](xlings/AGENTS.md) | Use the xlings package manager; write xim-pkgindex packages |
 | mcpp-style-ref | [mcpp-style-ref/](mcpp-style-ref/AGENTS.md) | Modern/Module C++ (C++23) coding style, copied from upstream (CC BY-NC-SA 4.0) |
-| gki | [gki/](gki/AGENTS.md) | Build Android GKI (android15-6.6) kernel modules and make KMI-safe kernel changes |
+| gki | [gki/](gki/AGENTS.md) | Build Android GKI (ACK 6.1 to 6.18) kernel modules and make KMI-safe kernel changes |
+| docs-style | [docs-style/](docs-style/AGENTS.md) | Write English developer docs in a style adapted from the Google developer documentation style guide (CC BY 4.0) |
 
 Before changing anything in `<skill>/`, read `<skill>/AGENTS.md`. It says what that skill is for
 and holds its rules. Run a skill's commands from its own directory.

@@ -1,5 +1,9 @@
 # Third-party kernel vs vendor, and choosing a path for a change
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Facts are for OGKI `android15-6.6` (Linux 6.6.118) built with plain Kbuild from `gki_defconfig`.
 Config-dependent statements say how to re-check them.
 
