@@ -23,4 +23,4 @@ npx skills add yspbwx2010/skills --skill mcpp-style-ref
 
 ## 许可证
 
-[CC BY-NC-SA 4.0](skills/mcpp-style-ref/LICENSE), 版权归 mcpp community. 这是本仓库里唯一不用 MIT 的 skill: 署名, 非商业使用, 改编后要用同样的许可证
+[CC BY-NC-SA 4.0](skills/mcpp-style-ref/LICENSE), 版权归 mcpp community. 本仓库里不用 MIT 的 skill 只有它和 docs-style. 它的条件: 署名, 非商业使用, 改编后要用同样的许可证

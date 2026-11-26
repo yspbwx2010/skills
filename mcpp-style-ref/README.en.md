@@ -23,4 +23,4 @@ or copy `mcpp-style-ref/skills/mcpp-style-ref/` into your agent's skills directo
 
 ## License
 
-[CC BY-NC-SA 4.0](skills/mcpp-style-ref/LICENSE), copyright mcpp community. This is the only skill in this repository that is not MIT: attribution, non-commercial use, and adaptations under the same licence
+[CC BY-NC-SA 4.0](skills/mcpp-style-ref/LICENSE), copyright mcpp community. It and docs-style are the only skills in this repository that are not MIT. Its terms: attribution, non-commercial use, and adaptations under the same licence
