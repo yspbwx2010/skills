@@ -8,7 +8,7 @@ Verified against APatch 11224 (`apd/assets/installer.sh`, `apd/src/module.rs`).
 module.zip
 ├── module.prop      # required
 ├── customize.sh     # optional — sourced by the installer after extraction
-├── system/...       # optional overlay tree
+├── system/...       # optional; mounted by the active metamodule, not by the manager
 ├── *.sh             # optional boot scripts (service.sh, post-fs-data.sh, ...)
 └── ...              # any other module files
 ```
@@ -17,12 +17,17 @@ Flashed from the APatch manager. **Cannot be installed from recovery.**
 
 ## Install order (default installer)
 
+If the active metamodule has `metainstall.sh`, the installer sources it **instead of** running the
+steps below directly; it calls `install_module` (which runs them) when it is ready, and may do work
+before or after (`meta-overlayfs` copies partition dirs into its image afterwards).
+
 1. Extract `module.prop`; abort if missing.
 2. Read `id` (validated against `^[a-zA-Z][a-zA-Z0-9._-]+$`), `name`, `author`.
 3. Extract `customize.sh`. If it does **not** contain a line `SKIPUNZIP=1`, extract the whole zip
    (minus `META-INF/`) into `$MODPATH`.
 4. Source `customize.sh` (if present).
-5. Apply `REPLACE` and `REMOVE` lists (see `references/systemless.md`).
+5. Apply `REPLACE` and `REMOVE` lists (see `references/systemless.md`; on KernelSU v3.x `REPLACE`
+   needs a metamodule that defines `mark_replace`).
 6. Set default permissions and finalize into `/data/adb/modules/<id>/`.
 
 `SKIPUNZIP=1` in `customize.sh` skips step 3's extraction — you then unpack and set permissions

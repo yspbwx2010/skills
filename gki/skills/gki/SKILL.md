@@ -1,44 +1,51 @@
 ---
 name: gki
-description: Build out-of-tree modules for and make changes to an Android GKI (Generic Kernel Image) arm64 kernel without breaking the KMI, pinned to the android15-6.6 common kernel (Linux 6.6.118, KMI generation 8, gki_defconfig). Covers what the KMI is made of, symbol lists and trimming, the MODULE_SIG_PROTECT symbol gate, KCFI-safe callbacks, vendor hooks (android_vh_* / android_rvh_*), kprobes, and what a self-built kernel must keep so stock vendor modules still load. Use when writing a GKI .ko, registering a vendor hook, choosing between a module, a hook, a kprobe, a defconfig change or a source patch, changing structs, exports, enums or Kconfig in an ACK tree, or debugging "disagrees about version of symbol", "Unknown symbol", "Protected symbol" or "Oops - CFI". Triggers on "GKI", "KMI", "ACK", "vendor hook", "android_vh", "android_rvh", "abi_gki_aarch64", "Module.symvers", "GKI 模块", "KMI 兼容", "vendor hook 注册", "内核模块签名", "第三方内核".
+description: Build out-of-tree modules for and make changes to an Android GKI (Generic Kernel Image) arm64 kernel without breaking the KMI, on the ACK branches android14-6.1, android15-6.6, android16-6.12 and android17-6.18 (gki_defconfig, arm64), with per-branch facts. Covers the KMI (symbol lists, trimming, the unsigned-module symbol gate), KCFI-safe callbacks, vendor hooks (android_vh_* / android_rvh_*), kprobes, what a self-built kernel must keep for stock vendor modules, and what changes per branch (Rust, CRC generator, vendor-data slot sizes). Use when writing a GKI .ko, registering a vendor hook, choosing between a module, a hook, a kprobe, a defconfig change or a source patch, changing structs, exports, enums or Kconfig in an ACK tree, or debugging "disagrees about version of symbol", "Unknown symbol", "Protected symbol" or "Oops - CFI". Triggers on "GKI", "KMI", "ACK", "vendor hook", "android_vh", "android_rvh", "abi_gki_aarch64", "Module.symvers", "GKI 模块", "KMI 兼容", "vendor hook 注册", "内核模块签名", "第三方内核".
 license: MIT
-compatibility: Building a module needs the kernel source tree, the output directory of a full build of it (.config and a complete Module.symvers), and the branch's clang (clang-r510928 / LLVM 18.0.0 for android15-6.6). Facts were verified on an arm64 android15-6.6 gki_defconfig build; re-check config-dependent ones on your own tree.
+compatibility: Building a module needs the kernel source tree, the output directory of a full build of it (.config and a complete Module.symvers), and the branch's clang (and rustc for Rust on 6.12+), see references/branches.md. Detailed measurements come from an OGKI android15-6.6 (6.6.118) build; per-branch differences for 6.1/6.6/6.12/6.18 were read from the ACK sources; anything marked verify must be re-checked on your tree.
 metadata:
-  kernel-version: "6.6.118"
-  ack-branch: "android15-6.6"
-  kmi-generation: "8"
+  ack-branches: "android14-6.1 android15-6.6 android16-6.12 android17-6.18"
+  measured-baseline: "OGKI android15-6.6, Linux 6.6.118, KMI generation 8"
 ---
 
 # Android GKI modules and KMI-safe kernel changes
 
 A GKI kernel is one Google-built kernel per ACK branch; device code (SoC drivers, vendor scheduling
 policy) lives in loadable modules that reach the kernel only through exported symbols and vendor
-hooks. The KMI is that interface: the symbol set in `android/abi_gki_aarch64*`, the layout of every
+hooks. The KMI is that interface: the symbol set in the KMI symbol lists (`android/abi_gki_aarch64*` up to 6.6, `gki/aarch64/symbols/*` from 6.12), the layout of every
 type those symbols reach, and the configs that change layouts or semantics.
 
-This skill is pinned to **OGKI `android15-6.6`** (OnePlus's common kernel tree for ACK
-`android15-6.6`): Linux **6.6.118**, `KMI_GENERATION=8`, `gki_defconfig`, arm64, clang **r510928**.
-Config-dependent facts below describe a plain Kbuild build of that `gki_defconfig`; each row says how
-to re-check it on your tree. `$KERNEL_SRC` is the source tree, `$KERNEL_OUT` the full build output
+This skill covers four ACK branches: `android14-6.1`, `android15-6.6`, `android16-6.12`,
+`android17-6.18` (`gki_defconfig`, arm64). The detailed measurements (counts, sizes, offsets, a real
+build) come from **one** tree: OGKI `android15-6.6` (OnePlus's common kernel for ACK `android15-6.6`,
+Linux 6.6.118, `KMI_GENERATION=8`, clang r510928). Numbers in this file and in `references/` are 6.6
+examples unless a row names a branch.
+
+**Step 0: identify the branch** (`head -4 Makefile`, `KMI_GENERATION`, the ACK tag), then read
+[references/branches.md](references/branches.md). It lists, per branch, which facts hold, which differ,
+and which are marked `verify` (not checked: run the given command before relying on it). Where it
+disagrees with another file for your branch, it wins. An OEM common kernel (OGKI) adds options and slot
+users that ACK does not have: check the tree you build and the device's `/proc/config.gz`. `$KERNEL_SRC` is the source tree, `$KERNEL_OUT` the full build output
 (`O=`); paths are relative to one of them.
 
 ## Facts that differ from what you would assume
 
-| You would assume | In this build | Check |
+| You would assume | Measured (OGKI 6.6.118 build unless a branch is named) | Check |
 |---|---|---|
-| `CONFIG_MODULE_SIG_PROTECT=y` limits unsigned modules to KMI symbols | **The gate is empty.** Without `CONFIG_UNUSED_KSYMS_WHITELIST`, `include/config/abi_gki_kmi_symbols` is generated empty, `gki_is_module_unprotected_symbol()` returns true for every name: an unsigned module may resolve any of the 16923 exports | `grep -A1 'gki_unprotected_symbols\[\]' "$KERNEL_OUT/include/generated/gki_module_unprotected.h"`: next line `};` = empty gate |
+| `CONFIG_MODULE_SIG_PROTECT=y` limits unsigned modules to KMI symbols | **The gate is empty** on the 6.6 build (6.1/6.6 `gki_defconfig` set `MODULE_SIG_PROTECT=y`; 6.12/6.18 `gki_defconfig` do not set it, the shipped 6.18 kernel does; the import check itself differs per branch, see [branches.md](references/branches.md) section 3). Without `CONFIG_UNUSED_KSYMS_WHITELIST`, `include/config/abi_gki_kmi_symbols` is generated empty, `gki_is_module_unprotected_symbol()` returns true for every name: an unsigned module may resolve any of the 16923 exports | `grep -A1 'gki_unprotected_symbols\[\]' "$KERNEL_OUT/include/generated/gki_module_unprotected.h"`: next line `};` = empty gate |
 | Hook any function with ftrace, fprobe or livepatch | `CONFIG_FUNCTION_TRACER` is **off**: no ftrace hooks, no fprobe, no `CONFIG_LIVEPATCH`. Turning it on grows `struct module`, and the loader then refuses every stock module. `CONFIG_KPROBES=y` and `register_kprobe()` is `EXPORT_SYMBOL_GPL`: **kprobes are the general hooking tool** | `grep -E 'FUNCTION_TRACER\|KPROBES=' $KERNEL_OUT/.config` |
-| GKI trims exports outside the KMI lists | `CONFIG_TRIM_UNUSED_KSYMS` is **off**; official builds trim from Kleaf (`trim_nonlisted_kmi`), not the defconfig. 16923 exports, 9197 in the KMI lists | `grep TRIM_UNUSED_KSYMS $KERNEL_OUT/.config` |
+| GKI trims exports outside the KMI lists | `CONFIG_TRIM_UNUSED_KSYMS` is **off** in every branch's `gki_defconfig` (a shipped 6.18 kernel has it on); official builds trim from Kleaf (`trim_nonlisted_kmi`), not the defconfig. 16923 exports, 9197 in the KMI lists | `grep TRIM_UNUSED_KSYMS $KERNEL_OUT/.config` |
 | `CONFIG_MODULE_SIG_ALL=y` signs my module | Signing happens only in `modules_install`. An `M=` build is **unsigned**; it still loads (`sig_enforce` is fixed to false under PROTECT) and counts as a vendor module | `tail -c 28 x.ko \| strings`: no `~Module signature appended~` |
 | The release string must match to load | With `CONFIG_MODVERSIONS=y`, `same_magic()` skips the release; per-symbol **CRCs** decide. A plain build's release is `6.6.118-4k-g<sha>[-dirty]`, never `-android15-8` | `modinfo -F vermagic x.ko` |
-| `struct rq` is private to `kernel/sched/sched.h`, so free to change | `struct rq` (3840 bytes) and `struct cfs_rq` are fully described in `android/abi_gki_aarch64.stg`: scheduler hooks reach them | `grep -A2 'name: "rq"$' $KERNEL_SRC/android/abi_gki_aarch64.stg` |
-| `android_rvh_*` hooks unregister like tracepoints | **No unregister API**, **2 probes per hook** (third gets `-EBUSY`), and a module that registers one can **never be unloaded** (`rmmod` fails with `-EBUSY`). Errors include a **positive** `ENOMEM`: check `if (ret)` | [vendor-hooks.md](references/vendor-hooks.md) |
+| `struct rq` is private to `kernel/sched/sched.h`, so free to change | `struct rq` (3840 bytes on 6.6; 4544 on 6.12 and 4864 on 6.18 per their `.stg`) and `struct cfs_rq` are fully described in the `.stg` on all four branches (`android/abi_gki_aarch64.stg`, from 6.12 `gki/aarch64/abi.stg`): scheduler hooks reach them | `grep -A2 'name: "rq"$' <stg>` |
+| `android_rvh_*` hooks unregister like tracepoints | **No unregister API**, **2 probes per hook** on all four branches (third gets `-EBUSY`), and a module that registers one must **never unload** (the probe is not tied to the module): omit `module_exit()` so `rmmod` refuses with `-EBUSY`. Errors include a **positive** `ENOMEM`: check `if (ret)` | [vendor-hooks.md](references/vendor-hooks.md) |
 | `CONFIG_ANDROID_VENDOR_HOOKS=n` makes `register_trace_*` return `-ENOSYS` | No `register_trace_*` is generated at all: hook modules fail to compile, prebuilt ones fail with `Unknown symbol` | `include/trace/hooks/vendor_hooks.h` |
 | `__nocfi` on my callback avoids a CFI panic | It expands to `__no_sanitize__("kcfi")` but only affects calls made **inside** that function. The failing check sits in the kernel's caller; only an exact prototype fixes it | [cfi.md](references/cfi.md) |
-| Writing `*vruntime` in `android_rvh_place_entity` steers placement | **Observe only** in 6.6.118: the value is never read back | [hook-catalog.md](references/hook-catalog.md) |
-| A vendor/OEM data slot with no user in the source is free | `android_vendor_data*` / `android_oem_data*` are a **shared convention space** filled by stock vendor modules; fork copies them into the child | [extending-safely.md](references/extending-safely.md) |
-| Equal CRCs after a config change mean it is safe | `CONFIG_SLIM_SCHED` (`y` here) changes what `task_struct` KABI slots 1-3 mean with **identical** CRCs and size | [kmi-breaking-changes.md](references/kmi-breaking-changes.md) section 4.7 |
-| Rust modules are an option | `CONFIG_RUST` cannot be enabled on this `gki_defconfig` (needs `!MODVERSIONS`, `!SHADOW_CALL_STACK`; ACK refuses Rust with CFI) | [toolchains.md](references/toolchains.md) |
+| Writing `*vruntime` in `android_rvh_place_entity` steers placement | **Observe only** on 6.6, 6.12 and 6.18 (last statement of `place_entity()`). On **6.1** the value **is** read back by the min_vruntime clamp | [hook-catalog.md](references/hook-catalog.md) |
+| A vendor/OEM data slot with no user in the source is free | `android_vendor_data*` / `android_oem_data*` are a **shared convention space** filled by stock vendor modules; fork copies them into the child. **Size differs:** `android_vendor_data1[64]` on 6.1/6.6, **`[6]`** on 6.12/6.18 | [extending-safely.md](references/extending-safely.md) |
+| CRCs come from genksyms, so `__GENKSYMS__` hides a change | True on 6.1/6.6 only. 6.12/6.18 set `CONFIG_GENDWARFKSYMS=y`: CRCs come from DWARF and `android_kabi.h` uses gendwarfksyms rules instead | [branches.md](references/branches.md) section 3 |
+| Equal CRCs after a config change mean it is safe | On the OGKI 6.6 tree `CONFIG_SLIM_SCHED=y` changes what `task_struct` KABI slots 1-3 mean with **identical** CRCs and size. That option is OnePlus-only (absent from ACK on all four branches); the lesson holds for any OEM option that reinterprets slots | [kmi-breaking-changes.md](references/kmi-breaking-changes.md) section 4.7 |
+| Rust modules are an option | **6.1/6.6:** `CONFIG_RUST` cannot be enabled (6.1 needs `!CFI_CLANG`, `!MODVERSIONS`, `!SHADOW_CALL_STACK`; 6.6 needs the last two and its `Makefile` refuses Rust with CFI). **6.12/6.18:** `gki_defconfig` sets `CONFIG_RUST=y` (MODVERSIONS through gendwarfksyms, CFI through integer normalization); use the branch's pinned rustc | [branches.md](references/branches.md) section 2 |
 | `kallsyms_lookup_name()` is available | Not exported. Calling any address it would give is a KCFI-checked indirect call; use such addresses to read data only | [choosing-a-path.md](references/choosing-a-path.md) |
 
 These freedoms (every export usable, empty gate, unsigned is fine) belong to **a kernel you built from
@@ -74,8 +81,10 @@ Take the first that works. Details: [choosing-a-path.md](references/choosing-a-p
   - `static inline` bodies and macros in `include/` (no tool checks them);
   - layout-affecting Kconfig: `ANDROID_VENDOR_OEM_DATA`, `ANDROID_KABI_RESERVE`, `ANDROID_VENDOR_HOOKS`
     on; lock debugging (`DEBUG_SPINLOCK`, `DEBUG_MUTEXES`, `DEBUG_LOCK_ALLOC`, `PROVE_LOCKING`) off;
-    `HZ=250`, `NR_CPUS=32`, 4K pages, `VA_BITS=39`, `SLIM_SCHED=y`; SMP, preemption model,
-    `MODULE_UNLOAD`, `MODVERSIONS` (the compared part of vermagic); `CFI_CLANG`, `SHADOW_CALL_STACK`;
+    `HZ`, `NR_CPUS`, page size, `VA_BITS` (6.6 build: 250, 32, 4K, 39), any OEM option that
+    reinterprets slots (OGKI 6.6: `SLIM_SCHED=y`); SMP, preemption model,
+    `MODULE_UNLOAD`, `MODVERSIONS` (the compared part of vermagic) and the CRC generator
+    (`GENDWARFKSYMS` on 6.12+); `CFI_CLANG` (`CFI` on 6.18), `SHADOW_CALL_STACK`;
     `FUNCTION_TRACER` off and every other option that gates a `struct module` field in
     `include/linux/module.h` as stock (the loader refuses a module whose `.gnu.linkonce.this_module`
     size differs).
@@ -90,7 +99,7 @@ Take the first that works. Details: [choosing-a-path.md](references/choosing-a-p
 
 ### CFI ([cfi.md](references/cfi.md))
 
-- `CONFIG_CFI_CLANG=y`, not permissive, `CONFIG_PANIC_ON_OOPS=y`: a type-mismatched indirect call panics.
+- `CONFIG_CFI_CLANG=y` (`CONFIG_CFI=y` on 6.18), not permissive, `CONFIG_PANIC_ON_OOPS=y`: a type-mismatched indirect call panics.
 - Copy each callback's prototype exactly from the typedef, struct field or `TP_PROTO`. **Never cast a
   function pointer**, never detour it through `void *` or an integer, never add `-Wno-...` to silence a
   function-pointer diagnostic.
@@ -103,11 +112,11 @@ Take the first that works. Details: [choosing-a-path.md](references/choosing-a-p
   four; a declaration or an export count is not a usable hook. An out-parameter only matters if the call
   site reads it back.
 - `#include <trace/hooks/<file>.h>` only; **never** `#define CREATE_TRACE_POINTS`. Use a GPL-compatible
-  `MODULE_LICENSE` (all 746 `__tracepoint_android_*` are `EXPORT_SYMBOL_GPL`).
-- Plain hooks (552): unregister with the same `(probe, data)` pair, then
+  `MODULE_LICENSE` (all `__tracepoint_android_*` are `EXPORT_SYMBOL_GPL`; 746 on the 6.6 build).
+- Plain hooks (552 on the 6.6 build; per-branch counts in [branches.md](references/branches.md) section 4): unregister with the same `(probe, data)` pair, then
   `tracepoint_synchronize_unregister()`. Callbacks run with preemption disabled: no sleeping, no
   `GFP_KERNEL`, no mutexes.
-- Restricted hooks (195): no unregister, 2 slots shared with every vendor module, never unloadable.
+- Restricted hooks (195 on the 6.6 build): no unregister, 2 slots shared with every vendor module, never unloadable.
   Pass `data = NULL`, register last in `module_init`, check `if (ret)` and return
   `ret > 0 ? -ret : ret`. Keep them out of reusable templates.
 - A restricted callback runs in its call site's context: `android_rvh_select_task_rq_fair` under
@@ -118,7 +127,7 @@ Take the first that works. Details: [choosing-a-path.md](references/choosing-a-p
 
 ### Vendor/OEM data slots ([extending-safely.md](references/extending-safely.md))
 
-- `task_struct.android_vendor_data1[64]`, `android_oem_data1[6]` and their siblings are shared vendor/OEM
+- `task_struct.android_vendor_data1[64]` (`[6]` on 6.12/6.18), `android_oem_data1[6]` and their siblings are shared vendor/OEM
   space, not free third-party slots. "No in-tree user" never means "free on the device": establish
   ownership on the target or treat the slot as taken. Fork copies the slots into the child.
 - This skill ships no slot template on purpose. If you use a slot, `static_assert` every offset you rely on.
@@ -134,7 +143,7 @@ Take the first that works. Details: [choosing-a-path.md](references/choosing-a-p
 ## Build
 
 ```sh
-export PATH=/path/to/clang-r510928/bin:$PATH       # the branch's clang, see build.config.constants
+export PATH=/path/to/clang-rNNNNNN/bin:$PATH       # the branch's clang: references/branches.md section 1
 make -C "$KERNEL_SRC" O="$KERNEL_OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
      KCFLAGS=-D__ANDROID_COMMON_KERNEL__ M="$PWD" modules
 ```
@@ -145,10 +154,11 @@ make -C "$KERNEL_SRC" O="$KERNEL_OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
   `the compiler differs from the one used to build the kernel` as an error. Branch table:
   [toolchains.md](references/toolchains.md).
 - Kbuild adds `-fsanitize=kcfi`, `-ffixed-x18`, pac-ret and `-Werror` (`CONFIG_WERROR=y`) itself.
-- The `.ko` is unsigned; its vermagic reads `6.6.118-4k-g<sha> SMP preempt mod_unload modversions aarch64`.
+- The `.ko` is unsigned; on the 6.6 build its vermagic reads `6.6.118-4k-g<sha> SMP preempt mod_unload modversions aarch64`.
+- Rust modules (6.12/6.18 only) need the branch's pinned rustc and the kernel build's Rust metadata; a different rustc is a different compiler.
 - Templates: copy [assets/kprobe-notifier/](assets/kprobe-notifier/) or
   [assets/vendor-hook/](assets/vendor-hook/), then `make KERNEL_SRC=... KERNEL_OUT=...` (`make ... clean`
-  to clean). Both build warning-free against a 6.6.118 `gki_defconfig` build.
+  to clean). Both were built warning-free against the 6.6.118 build only; on other branches re-check every hook prototype the template uses before building.
 - List what a module imports from outside the KMI lists before relying on it (`llvm-nm -u` plus `comm`,
   [choosing-a-path.md](references/choosing-a-path.md) section 1).
 - On the device after loading anything or flashing a kernel:
@@ -164,8 +174,8 @@ Condensed from [extending-safely.md](references/extending-safely.md) section 4; 
 2. **Symbols.** Any export deleted, renamed, turned `_GPL`, or moved from `obj-y` to `obj-m`?
 3. **Enums.** Any value inserted, removed or renumbered; any append behind an `NR_*` sentinel?
 4. **Inline and macro semantics.** Any `static inline` body or macro expansion changed? Check by hand.
-5. **Kconfig.** Diff against the baseline (`scripts/diffconfig`) and walk the must-keep list, `SLIM_SCHED`
-   first.
+5. **Kconfig.** Diff against the baseline (`scripts/diffconfig`) and walk the must-keep list, OEM slot-meaning
+   options (OGKI 6.6: `SLIM_SCHED`) first.
 6. **Measure.** Before and after full builds: diff `Module.symvers` symbols and CRCs, compare `pahole`
    sizes of core structs, compare the vermagic string. A partial substitute for `stgdiff`, not a gate.
 7. **Module side.** `static_assert` every layout assumption, no copied private headers, GPL license.
@@ -183,7 +193,7 @@ Condensed from [extending-safely.md](references/extending-safely.md) section 4; 
 | `if (ret < 0)` after a restricted-hook registration | `if (ret)`: `ENOMEM` comes back positive |
 | `return ret;` from `module_init` after a failed restricted-hook registration | `return ret > 0 ? -ret : ret;`: `do_init_module()` treats a positive return as success and keeps the module loaded without its hook |
 | Sleeping or `GFP_KERNEL` in a plain-hook callback or kprobe handler | Both run in atomic context |
-| Using `android_rvh_place_entity`'s `*vruntime` to steer placement | Observe-only in 6.6.118; pick a hook whose out-parameter is read back |
+| Using `android_rvh_place_entity`'s `*vruntime` to steer placement | Observe-only on 6.6, 6.12 and 6.18 (read back on 6.1); pick a hook whose out-parameter is read back on your branch |
 | Rewriting `*target_freq` in `android_vh_cpufreq_target` | Too late for `->target_index` drivers; use `android_vh_cpufreq_resolve_freq` and respect `policy->max` |
 | Copying `kernel/sched/sched.h` to dereference `struct rq` | Prefer hooks with public argument types and exported accessors |
 | Storing per-task state in `android_vendor_data1[k]` because no in-tree code uses it | Establish ownership on the device and handle fork copying the slot, or use module-owned storage cleaned up in `android_vh_free_task` |
@@ -197,14 +207,18 @@ Condensed from [extending-safely.md](references/extending-safely.md) section 4; 
 
 ## Verified vs inferred
 
-Everything above was read from the 6.6.118 source or measured on a `gki_defconfig` build, except what the
-references mark `(inferred)`. Could not confirm: whether a given device runs a kernel built from this
+Unless a row names another branch, everything above was read from the 6.6.118 source or measured on a
+`gki_defconfig` build of it, except what the references mark `(inferred)`. Per-branch facts and their
+evidence (source, shipped config, or `verify`) are in [references/branches.md](references/branches.md). Could not confirm: whether a given device runs a kernel built from this
 tree; what `vendor_boot` / `vendor_dlkm` contain; which hooks and data slots a device's vendor modules
 use; the official `stgdiff` check (not runnable from a plain source tree).
 
 ## References
 
 Read on demand; do not load all at once.
+
+- [references/branches.md](references/branches.md): **read first.** Per-branch facts for 6.1, 6.6, 6.12,
+  6.18: toolchains, Rust, CRC generator, KMI list paths, the gate, hook counts, slot sizes, `verify` items.
 
 - [references/architecture.md](references/architecture.md): fact table, GKI 2.0 split, KMI generation,
   vermagic and CRCs, the `abi_gki_aarch64*` lists and measured counts.

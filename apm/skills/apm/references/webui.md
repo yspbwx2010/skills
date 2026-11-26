@@ -2,7 +2,8 @@
 
 Verified against APatch 11224 (`apd/src/module.rs`, `app/.../ui/screen/APM.kt`, `ui/webui/`).
 
-These are APatch/KernelSU-style extensions beyond the base Magisk module. All optional.
+These are KernelSU-lineage extensions beyond the base Magisk module, all optional. WebUI exists in both
+managers; Lua is APatch only.
 
 ## WebUI — `webroot/`
 
@@ -46,7 +47,7 @@ when the module specifically wants it.
 
 ## Portability note
 
-`webroot/`, `action.sh` and Lua all exist in the KernelSU lineage too, but the JS bridge and Lua
-runtime differ per manager. A module relying on them is APatch/KernelSU-specific and will not do
+`webroot/` and `action.sh` exist in both KernelSU and APatch (the JS bridge differs in details, such
+as insets); Lua stage scripts are APatch only. A module relying on them is APatch/KernelSU-specific and will not do
 anything under Magisk. The portable core of an APM (module.prop, `system/` overlay, the four boot
 scripts, `system.prop`, `sepolicy.rule`) works the same across Magisk, KernelSU and APatch.

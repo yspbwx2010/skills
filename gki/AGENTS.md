@@ -13,9 +13,13 @@ self-built kernel must keep so the stock modules still load.
 Only `skills/gki/` is installed: `SKILL.md`, the `references/`, and two buildable module templates
 under `assets/` (`kprobe-notifier/`, `vendor-hook/`). Everything else here is maintainer tooling.
 
-It is written against **OGKI `android15-6.6`** (OnePlus's common kernel tree for ACK
-`android15-6.6`): Linux 6.6.118, `KMI_GENERATION=8`, `gki_defconfig`, arm64, clang-r510928. Never
-document another branch or generation from memory: KMI facts are per branch and per config.
+It covers the ACK branches **`android14-6.1`, `android15-6.6`, `android16-6.12` and
+`android17-6.18`** (`gki_defconfig`, arm64). The detailed measurements come from one tree, OGKI
+`android15-6.6` (OnePlus's common kernel tree for ACK `android15-6.6`): Linux 6.6.118,
+`KMI_GENERATION=8`, clang-r510928. What differs on the other branches was read from the ACK source at
+the tags listed in `skills/gki/references/branches.md`, without a full build of those trees; anything
+that still needs a build or a device is marked `verify` there. Never document another branch or
+generation from memory: KMI facts are per branch and per config.
 
 ## How it stays correct
 
@@ -26,10 +30,13 @@ eight errata were applied (for example: the KMI-list union does not depend on wh
 compare with; equal CRCs prove nothing about semantics; restricted hooks cannot be unregistered and
 have 2 slots; `android_rvh_place_entity` is observe-only; vendor/OEM data slots are shared, not free).
 Anything not verified is marked `(inferred)` or listed under "Could not confirm" in its reference.
+In `references/branches.md`, every per-branch fact names its source (`src`, `ship`, `ogki-6.6`) or is
+marked `verify`.
 
 `tools/check_gki.py` compiles every template under `skills/gki/assets/` against a prepared kernel
 build (source tree plus a full build's output) with the Kbuild command the skill documents, and fails
-on any error, warning or missing `.ko`. It needs a full kernel build, so it runs **locally only**;
+on any error, warning or missing `.ko`. The templates have been compiled against the 6.6.118 build
+only. It needs a full kernel build, so it runs **locally only**;
 CI (`.github/workflows/gki.yml`) runs `tools/validate_skill.py`.
 
 ## Rules

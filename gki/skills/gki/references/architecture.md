@@ -1,5 +1,9 @@
 # GKI architecture, KMI and the symbol lists
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Facts below are for OGKI `android15-6.6` built with plain Kbuild from `gki_defconfig` (Linux 6.6.118,
 `KMI_GENERATION=8`, arm64). Values marked "this build" depend on the config: re-check them on your own
 tree with the command given. Paths are relative to the kernel source root (`$KERNEL_SRC`) or the build
@@ -79,7 +83,7 @@ Part 2 is the one people forget. Two headers exist for it:
   later member can take a slot without changing `sizeof`; `ANDROID_KABI_USE` enforces with `_Static_assert`
   that the new member is not larger or more strictly aligned than the slot.
 - `include/linux/android_vendor.h`: `ANDROID_VENDOR_DATA_ARRAY` / `ANDROID_OEM_DATA_ARRAY`. With
-  `CONFIG_ANDROID_VENDOR_OEM_DATA=y`, `task_struct` really contains `android_vendor_data1[64]` and
+  `CONFIG_ANDROID_VENDOR_OEM_DATA=y`, `task_struct` really contains `android_vendor_data1[64]` (6.1/6.6; `[6]` on 6.12/6.18) and
   `android_oem_data1[6]`. These are a **shared vendor/OEM convention space, not free slots for a third
   party**: stock vendor modules may already use them even if no in-tree user is visible. See
   [extending-safely.md](extending-safely.md).

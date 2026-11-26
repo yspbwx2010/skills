@@ -1,5 +1,9 @@
 # Vendor hook catalog
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Pinned to OGKI `android15-6.6` (Linux 6.6.118, `gki_defconfig`, arm64). Hook names are listed in
 `include/trace/hooks/<header>`.
 
@@ -164,7 +168,7 @@ another rq lock from them (inferred from rq-lock ordering). Read the call site o
 | `android_rvh_check_preempt_wakeup` | R | `(struct rq *rq, struct task_struct *p, bool *preempt, bool *nopreempt, int wake_flags, struct sched_entity *se, struct sched_entity *pse, int next_buddy_marked)` | force or suppress wakeup preemption |
 | `android_rvh_check_preempt_wakeup_ignore` | R | `(struct task_struct *p, bool *ignore)` | `*ignore = true` skips the wakeup-preemption check |
 | `android_rvh_update_deadline` | R | `(struct cfs_rq *cfs_rq, struct sched_entity *se, bool *skip_preempt)` | `*skip_preempt = true` returns early: no new deadline, no resched |
-| `android_rvh_place_entity` | R | `(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial, u64 *vruntime)` | **observe only.** In 6.6.118 this is the last statement of `place_entity()` (`kernel/sched/fair.c:5320`), after `se->vruntime` and `se->deadline` are set. The local `vruntime` is never read back, so writing `*vruntime` changes nothing. Do not use it to steer placement or vruntime. |
+| `android_rvh_place_entity` | R | `(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial, u64 *vruntime)` | **observe only on 6.6, 6.12 and 6.18. On 6.1 it is read back**: there the call sits before the `max_vruntime()` clamp that assigns `se->vruntime`, so `*vruntime` steers placement. In 6.6.118 this is the last statement of `place_entity()` (`kernel/sched/fair.c:5320`), after `se->vruntime` and `se->deadline` are set. The local `vruntime` is never read back, so writing `*vruntime` changes nothing. Do not use it to steer placement or vruntime. |
 | `android_rvh_tick_entry` / `android_vh_scheduler_tick` | R / P | `(struct rq *rq)` | per-tick notification |
 | `android_rvh_context_switch` | R | `(struct task_struct *pre, struct task_struct *next)` | notification |
 | `android_rvh_enqueue_task` / `_dequeue_task` / `_after_enqueue_task` / `_after_dequeue_task` | R | `(struct rq *rq, struct task_struct *p, int flags)` | notifications around core enqueue/dequeue |

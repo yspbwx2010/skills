@@ -1,7 +1,12 @@
 # CFI (KCFI) and callback function pointers
 
+> **Branch scope.** Measured on OGKI `android15-6.6` (Linux 6.6.118) unless a line names another
+> branch. For 6.1, 6.12 and 6.18, and for where ACK 6.6 differs from OGKI, read
+> [branches.md](branches.md) first; it wins where the two disagree.
+
 Facts are for OGKI `android15-6.6` (Linux 6.6.118, `gki_defconfig`, clang r510928 / LLVM 18). Re-check the
 config lines on your build: `grep -E 'CFI|PANIC_ON_OOPS|LTO_NONE|SHADOW_CALL|DYNAMIC_SCS' "$KERNEL_OUT"/.config`.
+On 6.18 the option is named `CONFIG_CFI` (6.1/6.6/6.12: `CONFIG_CFI_CLANG`); the rules below are the same.
 
 ## 1. Config and what a violation does
 
